@@ -48,7 +48,17 @@ const SELECTORS = {
     'time',
     '.job-card-container__listed-date',
     'time[datetime]',
-    'span[data-testid="job-posted-date"]'
+    'span[data-testid="job-posted-date"]',
+    '.job-search-card__metadata-item time',
+    '.base-search-card__metadata time',
+    '.job-card-container__metadata-item time',
+    'li[data-testid="job-posted-date"]',
+    '.jobs-search-results__list-item time',
+    'span.job-search-card__listdate',
+    'div.job-search-card__listdate',
+    '[class*="listdate"]',
+    '[class*="listed-date"]',
+    '[class*="posted-date"]'
   ],
   jobLink: [
     '.job-search-card__title-link',
@@ -88,7 +98,14 @@ const SELECTORS = {
     '.jobs-details-top-card__job-insight',
     '.jobs-details-top-card__job-insight-text-item',
     'span[data-testid="job-posted-date"]',
-    'time[datetime]'
+    'time[datetime]',
+    '.jobs-details-top-card__primary-description time',
+    '.jobs-details-top-card__primary-description-without-tagline time',
+    'li[data-testid="job-posted-date"]',
+    '[class*="job-insight"] time',
+    '[class*="posted-date"]',
+    '.jobs-details-top-card__primary-description li:last-child',
+    '.jobs-details-top-card__primary-description-without-tagline li:last-child'
   ],
   
   // Infinite scroll
@@ -318,9 +335,11 @@ async function scrapeJobs(onlyNew = true, lastSeenIds = [], pageIndex = 0) {
       
       // Try multiple methods to extract date
       let datePosted = 'Unknown';
+      
+      // First, try all date selectors
       const dateElement = findElement(SELECTORS.jobDate, card);
       if (dateElement) {
-        datePosted = dateElement.textContent.trim();
+        let dateText = dateElement.textContent.trim();
         // Try to get datetime attribute if it's a time element
         const datetime = dateElement.getAttribute('datetime');
         if (datetime) {
@@ -334,14 +353,79 @@ async function scrapeJobs(onlyNew = true, lastSeenIds = [], pageIndex = 0) {
             else if (diffDays < 30) datePosted = `${Math.floor(diffDays / 7)} weeks ago`;
             else datePosted = `${Math.floor(diffDays / 30)} months ago`;
           } catch (e) {
-            // Keep original text
+            // Fall back to text content
+            if (dateText) datePosted = dateText;
+          }
+        } else if (dateText) {
+          datePosted = dateText;
+        }
+      }
+      
+      // If still unknown, try to find all time elements in the card
+      if (datePosted === 'Unknown') {
+        const timeElements = card.querySelectorAll('time[datetime]');
+        for (const timeEl of timeElements) {
+          const datetime = timeEl.getAttribute('datetime');
+          if (datetime) {
+            try {
+              const date = new Date(datetime);
+              const now = new Date();
+              const diffDays = Math.floor((now - date) / (1000 * 60 * 60 * 24));
+              if (diffDays === 0) datePosted = 'Today';
+              else if (diffDays === 1) datePosted = '1 day ago';
+              else if (diffDays < 7) datePosted = `${diffDays} days ago`;
+              else if (diffDays < 30) datePosted = `${Math.floor(diffDays / 7)} weeks ago`;
+              else datePosted = `${Math.floor(diffDays / 30)} months ago`;
+              break;
+            } catch (e) {
+              const text = timeEl.textContent.trim();
+              if (text) {
+                datePosted = text;
+                break;
+              }
+            }
           }
         }
-      } else {
-        // Try to find date patterns in text
+      }
+      
+      // If still unknown, try to find date patterns in text
+      if (datePosted === 'Unknown') {
         const cardText = card.textContent || '';
-        const dateMatch = cardText.match(/(\d+\s+(day|week|month)s?\s+ago|Just now|Today|Yesterday)/i);
-        if (dateMatch) datePosted = dateMatch[1];
+        const cardInnerText = card.innerText || '';
+        const allText = cardText + ' ' + cardInnerText;
+        
+        // More comprehensive date patterns
+        const datePatterns = [
+          /(\d+\s+(day|week|month|hour|minute)s?\s+ago)/i,
+          /(Just\s+now|Today|Yesterday)/i,
+          /(Posted\s+(\d+\s+(day|week|month)s?\s+ago))/i,
+          /(Posted\s+(Just\s+now|Today|Yesterday))/i,
+          /(\d+d\s+ago|\d+w\s+ago|\d+m\s+ago)/i, // Short formats like "3d ago"
+          /(Active\s+(\d+\s+(day|week|month)s?\s+ago))/i
+        ];
+        
+        for (const pattern of datePatterns) {
+          const match = allText.match(pattern);
+          if (match) {
+            datePosted = match[1] || match[0];
+            break;
+          }
+        }
+      }
+      
+      // If still unknown, look through all metadata elements
+      if (datePosted === 'Unknown') {
+        const metadataElements = card.querySelectorAll('.job-search-card__metadata-item, .base-search-card__metadata, .job-card-container__metadata-item, li, span');
+        for (const el of metadataElements) {
+          const text = el.textContent.trim();
+          if (!text || text.length > 50) continue;
+          
+          // Check if it looks like a date
+          if (text.match(/(\d+\s+(day|week|month)s?\s+ago|Just\s+now|Today|Yesterday|\d+d\s+ago|\d+w\s+ago)/i)) {
+            datePosted = text;
+            break;
+          }
+        }
       }
       
       // If we still have unknowns, try extracting from card's full text structure
@@ -395,15 +479,45 @@ async function scrapeJobs(onlyNew = true, lastSeenIds = [], pageIndex = 0) {
         if (datePosted === 'Unknown') {
           // Look for date patterns in text
           const datePatterns = [
-            /(\d+\s+(day|week|month)s?\s+ago)/i,
-            /(Just now|Today|Yesterday)/i,
-            /(Posted\s+(\d+\s+(day|week|month)s?\s+ago))/i
+            /(\d+\s+(day|week|month|hour|minute)s?\s+ago)/i,
+            /(Just\s+now|Today|Yesterday)/i,
+            /(Posted\s+(\d+\s+(day|week|month)s?\s+ago))/i,
+            /(Posted\s+(Just\s+now|Today|Yesterday))/i,
+            /(\d+d\s+ago|\d+w\s+ago|\d+m\s+ago)/i,
+            /(Active\s+(\d+\s+(day|week|month)s?\s+ago))/i
           ];
           for (const pattern of datePatterns) {
             const match = cardText.match(pattern);
             if (match) {
               datePosted = match[1] || match[0];
               break;
+            }
+          }
+          
+          // Also check HTML for time elements with datetime
+          if (datePosted === 'Unknown') {
+            const timeElements = card.querySelectorAll('time');
+            for (const timeEl of timeElements) {
+              const datetime = timeEl.getAttribute('datetime');
+              if (datetime) {
+                try {
+                  const date = new Date(datetime);
+                  const now = new Date();
+                  const diffDays = Math.floor((now - date) / (1000 * 60 * 60 * 24));
+                  if (diffDays === 0) datePosted = 'Today';
+                  else if (diffDays === 1) datePosted = '1 day ago';
+                  else if (diffDays < 7) datePosted = `${diffDays} days ago`;
+                  else if (diffDays < 30) datePosted = `${Math.floor(diffDays / 7)} weeks ago`;
+                  else datePosted = `${Math.floor(diffDays / 30)} months ago`;
+                  break;
+                } catch (e) {
+                  const text = timeEl.textContent.trim();
+                  if (text) {
+                    datePosted = text;
+                    break;
+                  }
+                }
+              }
             }
           }
         }
@@ -607,6 +721,7 @@ async function getJobDescription(jobUrl) {
     
     // Extract date with multiple fallbacks
     const getDate = () => {
+      // First try all date selectors
       const dateSelectors = Array.isArray(SELECTORS.jobDetailDate)
         ? SELECTORS.jobDetailDate
         : [SELECTORS.jobDetailDate];
@@ -626,13 +741,16 @@ async function getJobDescription(jobUrl) {
               else if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
               else return `${Math.floor(diffDays / 30)} months ago`;
             } catch (e) {
-              return text;
+              if (text) return text;
             }
           }
-          if (text) return text;
+          if (text && text.match(/(\d+\s+(day|week|month)s?\s+ago|Just\s+now|Today|Yesterday)/i)) {
+            return text;
+          }
         }
       }
-      // Fallback: look for all time elements
+      
+      // Fallback: look for all time elements with datetime
       const timeElements = doc.querySelectorAll('time[datetime]');
       for (const el of timeElements) {
         const datetime = el.getAttribute('datetime');
@@ -647,10 +765,47 @@ async function getJobDescription(jobUrl) {
             else if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
             else return `${Math.floor(diffDays / 30)} months ago`;
           } catch (e) {
-            return el.textContent.trim();
+            const text = el.textContent.trim();
+            if (text) return text;
           }
         }
       }
+      
+      // Fallback: look for all time elements (even without datetime)
+      const allTimeElements = doc.querySelectorAll('time');
+      for (const el of allTimeElements) {
+        const text = el.textContent.trim();
+        if (text && text.match(/(\d+\s+(day|week|month)s?\s+ago|Just\s+now|Today|Yesterday)/i)) {
+          return text;
+        }
+      }
+      
+      // Fallback: look for date patterns in page text
+      const pageText = doc.body.textContent || '';
+      const datePatterns = [
+        /(\d+\s+(day|week|month|hour|minute)s?\s+ago)/i,
+        /(Just\s+now|Today|Yesterday)/i,
+        /(Posted\s+(\d+\s+(day|week|month)s?\s+ago))/i,
+        /(Posted\s+(Just\s+now|Today|Yesterday))/i,
+        /(\d+d\s+ago|\d+w\s+ago|\d+m\s+ago)/i,
+        /(Active\s+(\d+\s+(day|week|month)s?\s+ago))/i
+      ];
+      for (const pattern of datePatterns) {
+        const match = pageText.match(pattern);
+        if (match) {
+          return match[1] || match[0];
+        }
+      }
+      
+      // Last fallback: look through all job insight elements
+      const insightElements = doc.querySelectorAll('.jobs-details-top-card__job-insight, .jobs-details-top-card__job-insight-text-item, li');
+      for (const el of insightElements) {
+        const text = el.textContent.trim();
+        if (text && text.match(/(\d+\s+(day|week|month)s?\s+ago|Just\s+now|Today|Yesterday)/i)) {
+          return text;
+        }
+      }
+      
       return null;
     };
     
