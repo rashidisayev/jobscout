@@ -296,7 +296,10 @@ function displayResults(jobs) {
         <th>Location</th>
         <th>Date Posted</th>
         <th>Best Resume</th>
-        <th>Score</th>
+        <th>
+          Score
+          <span class="score-help-icon" id="scoreHelpIcon" title="Click for score information">?</span>
+        </th>
         <th>Actions</th>
       </tr>
     </thead>
@@ -312,12 +315,9 @@ function displayResults(jobs) {
             ${job.matchScore !== undefined && job.matchScore !== null ? (() => {
               const score = job.matchScore;
               const scoreClass = getScoreClass(score);
-              const tooltip = getScoreTooltip(score);
               return `
                 <span class="score-badge ${scoreClass}" 
-                      data-score="${score}" 
-                      data-tooltip="${escapeHtml(tooltip)}"
-                      title="${escapeHtml(tooltip)}">
+                      data-score="${score}">
                   ${(score * 100).toFixed(1)}%
                 </span>
               `;
@@ -333,6 +333,12 @@ function displayResults(jobs) {
   
   tableDiv.innerHTML = '';
   tableDiv.appendChild(table);
+  
+  // Add click handler for score help icon
+  const helpIcon = document.getElementById('scoreHelpIcon');
+  if (helpIcon) {
+    helpIcon.addEventListener('click', showScoreInfoModal);
+  }
 }
 
 function getScoreClass(score) {
@@ -349,6 +355,65 @@ function getScoreTooltip(score) {
   if (score >= 0.3) return '0.3 - 0.5: Moderate match (relevant but not perfect)';
   if (score >= 0.1) return '0.1 - 0.3: Weak match (some common terms)';
   return '0.0 - 0.1: Very poor match (different fields/skills)';
+}
+
+function showScoreInfoModal() {
+  // Create modal overlay
+  const modal = document.createElement('div');
+  modal.className = 'score-info-modal';
+  modal.innerHTML = `
+    <div class="score-info-modal-content">
+      <div class="score-info-modal-header">
+        <h3>Match Score Information</h3>
+        <button class="score-info-modal-close" id="closeScoreModal">&times;</button>
+      </div>
+      <div class="score-info-modal-body">
+        <div class="score-info-item">
+          <span class="score-badge score-excellent">0.7 - 1.0</span>
+          <span class="score-info-text">Excellent match (very similar content)</span>
+        </div>
+        <div class="score-info-item">
+          <span class="score-badge score-good">0.5 - 0.7</span>
+          <span class="score-info-text">Good match (strong overlap)</span>
+        </div>
+        <div class="score-info-item">
+          <span class="score-badge score-moderate">0.3 - 0.5</span>
+          <span class="score-info-text">Moderate match (relevant but not perfect)</span>
+        </div>
+        <div class="score-info-item">
+          <span class="score-badge score-weak">0.1 - 0.3</span>
+          <span class="score-info-text">Weak match (some common terms)</span>
+        </div>
+        <div class="score-info-item">
+          <span class="score-badge score-very-poor">0.0 - 0.1</span>
+          <span class="score-info-text">Very poor match (different fields/skills)</span>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  document.body.appendChild(modal);
+  
+  // Close handlers
+  const closeBtn = document.getElementById('closeScoreModal');
+  closeBtn.addEventListener('click', () => {
+    document.body.removeChild(modal);
+  });
+  
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) {
+      document.body.removeChild(modal);
+    }
+  });
+  
+  // Close on Escape key
+  const escapeHandler = (e) => {
+    if (e.key === 'Escape') {
+      document.body.removeChild(modal);
+      document.removeEventListener('keydown', escapeHandler);
+    }
+  };
+  document.addEventListener('keydown', escapeHandler);
 }
 
 // CSV Export
