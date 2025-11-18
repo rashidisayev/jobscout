@@ -38,31 +38,6 @@ The extension requires icon files. You can create simple icons or use placeholde
 
 You can create these using any image editor, or use online tools like [Favicon Generator](https://www.favicon-generator.org/).
 
-### Step 4: Install PDF.js (Optional, for PDF resume parsing)
-
-For PDF resume parsing support:
-
-1. **Download PDF.js**:
-   - Visit https://mozilla.github.io/pdf.js/
-   - Download the latest version or use npm: `npm install pdfjs-dist`
-
-2. **Copy Required Files** to `vendor/pdfjs/`:
-   - `pdf.mjs` (main PDF.js ES module) - from `build/pdf.mjs` or `legacy/build/pdf.min.mjs` (rename to `pdf.mjs`)
-   - `pdf.worker.mjs` (worker file) - from `build/pdf.worker.mjs` or `legacy/build/pdf.worker.min.mjs` (rename to `pdf.worker.mjs`)
-   - Source map files (`.map`) are optional
-
-3. **File Structure**:
-   ```
-   vendor/pdfjs/
-   ├── pdf.mjs
-   ├── pdf.worker.mjs
-   └── *.map (optional)
-   ```
-
-4. **Note**: The extension will work without PDF.js, but PDF resume parsing will not be available. TXT and DOCX files will still work.
-
-See `vendor/pdfjs/README.md` for detailed instructions.
-
 ## Usage
 
 ### Initial Setup
@@ -173,7 +148,7 @@ jobsearch/
 - Check the browser console for errors
 
 ### Resume parsing issues
-- PDF: Install PDF.js for better support (see Installation step 4)
+- PDF: PDF.js library is included in the extension for PDF parsing support
 - DOCX: For better DOCX parsing, you can include JSZip library in options.html
 - TXT: Should work without any additional setup
 
@@ -187,7 +162,7 @@ jobsearch/
 
 - **LinkedIn DOM Changes**: LinkedIn may update their website structure, which could break scraping. The extension uses common selectors, but may need updates if LinkedIn changes significantly.
 - **Rate Limiting**: The extension includes delays, but LinkedIn may still rate-limit if you scan too frequently. Adjust scan interval if needed.
-- **PDF Parsing**: Requires PDF.js library for full support (see Installation)
+- **PDF Parsing**: PDF.js library is included for PDF resume parsing support
 - **DOCX Parsing**: Basic support included; for better results, include JSZip library
 - **Browser Only**: This extension only works in Chrome/Chromium browsers
 
