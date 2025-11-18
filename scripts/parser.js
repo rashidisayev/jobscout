@@ -45,7 +45,56 @@ async function parsePDF(file) {
     }
     
     const arrayBuffer = await file.arrayBuffer();
-    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    
+    // Create a custom StandardFontDataFactory that returns empty data
+    // This works for text extraction since we don't need to render fonts
+    class EmptyStandardFontDataFactory {
+      constructor() {}
+      async fetch({ filename }) {
+        // Return empty ArrayBuffer for font files
+        // This allows PDF.js to proceed with text extraction
+        return new ArrayBuffer(0);
+      }
+    }
+    
+    // Configure PDF.js options for text extraction
+    const pdfOptions = {
+      data: arrayBuffer,
+      // Provide a dummy URL (required by PDF.js but won't be used with custom factory)
+      standardFontDataUrl: 'data:,', // Data URL that won't be fetched
+      // Use our custom factory that returns empty data
+      StandardFontDataFactory: EmptyStandardFontDataFactory,
+      // Disable font face to avoid font loading issues for text extraction
+      disableFontFace: true,
+      // Ignore errors to continue extraction even if fonts fail
+      stopAtErrors: false,
+      // Verbosity level (0 = errors, 1 = warnings, 5 = infos)
+      verbosity: 0
+    };
+    
+    let pdf;
+    try {
+      pdf = await pdfjsLib.getDocument(pdfOptions).promise;
+    } catch (error) {
+      // If custom factory doesn't work, try with CDN as fallback
+      if (error.message && error.message.includes('standardFontDataUrl')) {
+        console.warn('Custom font factory failed, trying CDN fallback');
+        try {
+          pdf = await pdfjsLib.getDocument({
+            data: arrayBuffer,
+            standardFontDataUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/standard_fonts/',
+            disableFontFace: true,
+            stopAtErrors: false,
+            verbosity: 0
+          }).promise;
+        } catch (cdnError) {
+          console.error('Both custom factory and CDN failed:', cdnError);
+          throw new Error(`Failed to parse PDF: ${error.message}. Please ensure the PDF uses embedded fonts or try a different PDF file.`);
+        }
+      } else {
+        throw error;
+      }
+    }
     
     let fullText = '';
     
