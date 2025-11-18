@@ -309,10 +309,7 @@ function displayResults(jobs) {
         <th>Location</th>
         <th>Date Posted</th>
         <th>Best Resume</th>
-        <th>
-          Score
-          <span class="score-help-icon" id="scoreHelpIcon" title="Click for score information">?</span>
-        </th>
+        <th>Score</th>
         <th>Actions</th>
       </tr>
     </thead>
@@ -363,12 +360,6 @@ function displayResults(jobs) {
   tableDiv.innerHTML = '';
   tableDiv.appendChild(legend);
   tableDiv.appendChild(table);
-  
-  // Add click handler for score help icon
-  const helpIcon = document.getElementById('scoreHelpIcon');
-  if (helpIcon) {
-    helpIcon.addEventListener('click', showScoreInfoModal);
-  }
 }
 
 // Normalize score to [0,1] range, handling various input scales
