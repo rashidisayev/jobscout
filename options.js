@@ -310,7 +310,9 @@ function displayResults(jobs) {
           <td>${escapeHtml(job.bestResume || 'N/A')}</td>
           <td>
             ${job.matchScore !== undefined && job.matchScore !== null ? `
-              <span class="score-badge ${getScoreClass(job.matchScore)}">
+              <span class="score-badge ${getScoreClass(job.matchScore)}" 
+                    data-score="${job.matchScore}" 
+                    title="${getScoreTooltip(job.matchScore)}">
                 ${(job.matchScore * 100).toFixed(1)}%
               </span>
             ` : 'N/A'}
@@ -328,9 +330,19 @@ function displayResults(jobs) {
 }
 
 function getScoreClass(score) {
-  if (score >= 0.7) return 'score-high';
-  if (score >= 0.4) return 'score-medium';
-  return 'score-low';
+  if (score >= 0.7) return 'score-excellent';
+  if (score >= 0.5) return 'score-good';
+  if (score >= 0.3) return 'score-moderate';
+  if (score >= 0.1) return 'score-weak';
+  return 'score-very-poor';
+}
+
+function getScoreTooltip(score) {
+  if (score >= 0.7) return '0.7 - 1.0: Excellent match (very similar content)';
+  if (score >= 0.5) return '0.5 - 0.7: Good match (strong overlap)';
+  if (score >= 0.3) return '0.3 - 0.5: Moderate match (relevant but not perfect)';
+  if (score >= 0.1) return '0.1 - 0.3: Weak match (some common terms)';
+  return '0.0 - 0.1: Very poor match (different fields/skills)';
 }
 
 // CSV Export

@@ -310,27 +310,48 @@ table tr:hover {
   background: #f9f9f9;
 }
 
+/* Score badge base styles */
 .score-badge {
   display: inline-block;
-  padding: 4px 8px;
-  border-radius: 4px;
-  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 12px;
   font-weight: 600;
+  font-size: 12px;
+  cursor: help;
+  position: relative;
 }
 
-.score-high {
-  background: #d4edda;
-  color: #155724;
+/* Score range colors - gradient from red (poor) to green (excellent) */
+.score-very-poor {
+  background: #dc3545; /* Red - Very poor match (0.0 - 0.1) */
+  color: white;
 }
 
-.score-medium {
-  background: #fff3cd;
-  color: #856404;
+.score-weak {
+  background: #fd7e14; /* Orange - Weak match (0.1 - 0.3) */
+  color: white;
 }
 
-.score-low {
-  background: #f8d7da;
-  color: #721c24;
+.score-moderate {
+  background: #ffc107; /* Yellow - Moderate match (0.3 - 0.5) */
+  color: #333;
+}
+
+.score-good {
+  background: #20c997; /* Teal - Good match (0.5 - 0.7) */
+  color: white;
+}
+
+.score-excellent {
+  background: #28a745; /* Green - Excellent match (0.7 - 1.0) */
+  color: white;
+}
+
+/* Enhanced tooltip on hover */
+.score-badge:hover {
+  opacity: 0.9;
+  transform: scale(1.05);
+  transition: all 0.2s ease;
 }
 
 .job-link {
