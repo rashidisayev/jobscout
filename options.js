@@ -5,7 +5,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadSearchUrls();
   await loadResumes();
   await loadSettings();
-  await migrateScores(); // Normalize existing scores
   await loadResults();
   await updateLiveScanStatus();
   
@@ -288,18 +287,6 @@ function displayResults(jobs) {
     return;
   }
   
-  // Create legend
-  const legend = document.createElement('div');
-  legend.className = 'score-legend';
-  legend.innerHTML = `
-    <span class="legend-label">Color scale:</span>
-    <span class="legend-item"><span class="score-badge score-red">0.0–0.1</span> Very poor</span>
-    <span class="legend-item"><span class="score-badge score-orange">0.1–0.3</span> Weak</span>
-    <span class="legend-item"><span class="score-badge score-amber">0.3–0.5</span> Moderate</span>
-    <span class="legend-item"><span class="score-badge score-teal">0.5–0.7</span> Good</span>
-    <span class="legend-item"><span class="score-badge score-green">0.7–1.0</span> Excellent</span>
-  `;
-  
   const table = document.createElement('table');
   table.innerHTML = `
     <thead>
@@ -309,127 +296,86 @@ function displayResults(jobs) {
         <th>Location</th>
         <th>Date Posted</th>
         <th>Best Resume</th>
-        <th>Score</th>
+        <th>
+          Score
+          <span class="score-help-icon" id="scoreHelpIcon" title="Click for score information">?</span>
+        </th>
         <th>Actions</th>
       </tr>
     </thead>
     <tbody>
-      ${jobs.map(job => {
-        if (job.matchScore !== undefined && job.matchScore !== null) {
-          const normalized = normalizeScore(job.matchScore);
-          const cls = scoreClass(normalized);
-          const color = getScoreColor(normalized);
-          return `
-            <tr>
-              <td>${escapeHtml(job.title || 'N/A')}</td>
-              <td>${escapeHtml(job.company && job.company !== 'Unknown' ? job.company : 'N/A')}</td>
-              <td>${escapeHtml(job.location && job.location !== 'Unknown' ? job.location : 'N/A')}</td>
-              <td>${escapeHtml(job.datePosted && job.datePosted !== 'Unknown' ? job.datePosted : 'N/A')}</td>
-              <td>${escapeHtml(job.bestResume || 'N/A')}</td>
-              <td>
-                <span class="score-badge ${cls}" 
-                      data-score="${normalized}"
-                      style="background-color: ${color.bg} !important; color: ${color.text} !important; border: none !important;">
-                  ${normalized.toFixed(2)}
+      ${jobs.map(job => `
+        <tr>
+          <td>${escapeHtml(job.title || 'N/A')}</td>
+          <td>${escapeHtml(job.company && job.company !== 'Unknown' ? job.company : 'N/A')}</td>
+          <td>${escapeHtml(job.location && job.location !== 'Unknown' ? job.location : 'N/A')}</td>
+          <td>${escapeHtml(job.datePosted && job.datePosted !== 'Unknown' ? job.datePosted : 'N/A')}</td>
+          <td>${escapeHtml(job.bestResume || 'N/A')}</td>
+          <td>
+            ${job.matchScore !== undefined && job.matchScore !== null ? (() => {
+              const score = job.matchScore;
+              // Convert to percentage for display and color calculation
+              const scorePercent = score * 100;
+              const scoreClass = getScoreClass(score);
+              const scoreColor = getScoreColor(scorePercent);
+              return `
+                <span class="score-badge ${scoreClass}" 
+                      data-score="${score}"
+                      style="background-color: ${scoreColor.bg} !important; color: ${scoreColor.text} !important; border: none !important;">
+                  ${scorePercent.toFixed(1)}
                 </span>
-              </td>
-              <td>
-                ${job.link ? `<a href="${job.link}" target="_blank" class="job-link">View</a>` : 'N/A'}
-              </td>
-            </tr>
-          `;
-        } else {
-          return `
-            <tr>
-              <td>${escapeHtml(job.title || 'N/A')}</td>
-              <td>${escapeHtml(job.company && job.company !== 'Unknown' ? job.company : 'N/A')}</td>
-              <td>${escapeHtml(job.location && job.location !== 'Unknown' ? job.location : 'N/A')}</td>
-              <td>${escapeHtml(job.datePosted && job.datePosted !== 'Unknown' ? job.datePosted : 'N/A')}</td>
-              <td>${escapeHtml(job.bestResume || 'N/A')}</td>
-              <td>N/A</td>
-              <td>
-                ${job.link ? `<a href="${job.link}" target="_blank" class="job-link">View</a>` : 'N/A'}
-              </td>
-            </tr>
-          `;
-        }
-      }).join('')}
+              `;
+            })() : 'N/A'}
+          </td>
+          <td>
+            ${job.link ? `<a href="${job.link}" target="_blank" class="job-link">View</a>` : 'N/A'}
+          </td>
+        </tr>
+      `).join('')}
     </tbody>
   `;
   
   tableDiv.innerHTML = '';
-  tableDiv.appendChild(legend);
   tableDiv.appendChild(table);
-}
-
-// Normalize score to [0,1] range, handling various input scales
-function normalizeScore(raw) {
-  let s = Number(raw);
-  if (!isFinite(s) || s < 0) s = 0;
   
-  // Heuristics for common mistaken scales
-  if (s > 1) {
-    if (s <= 5) s = s / 5;        // 0..5 scale
-    else if (s <= 100) s = s / 100; // percentage 0..100
-    else s = 1;
+  // Add click handler for score help icon
+  const helpIcon = document.getElementById('scoreHelpIcon');
+  if (helpIcon) {
+    helpIcon.addEventListener('click', showScoreInfoModal);
   }
-  
-  // Clamp
-  if (s > 1) s = 1;
-  if (s < 0) s = 0;
-  return s;
 }
 
-// Map normalized score [0,1] → color class
-function scoreClass(s) {
-  if (s >= 0.70) return 'score-green';     // Excellent
-  if (s >= 0.50) return 'score-teal';      // Good
-  if (s >= 0.30) return 'score-amber';     // Moderate
-  if (s >= 0.10) return 'score-orange';    // Weak
-  return 'score-red';                      // Very poor
+function getScoreClass(score) {
+  if (score >= 0.7) return 'score-excellent';
+  if (score >= 0.5) return 'score-good';
+  if (score >= 0.3) return 'score-moderate';
+  if (score >= 0.1) return 'score-weak';
+  return 'score-very-poor';
 }
 
-// Get color values for inline styles
-function getScoreColor(normalizedScore) {
-  if (normalizedScore >= 0.70) {
-    return { bg: '#1F9D55', text: 'white' }; // Green - Excellent
+function getScoreColor(scorePercent) {
+  // scorePercent is 0-100 (percentage value)
+  if (scorePercent >= 70) {
+    return { bg: '#28a745', text: 'white' }; // Green - Excellent match (70-100)
   }
-  if (normalizedScore >= 0.50) {
-    return { bg: '#2CA6A4', text: 'white' }; // Teal - Good
+  if (scorePercent >= 50) {
+    return { bg: '#20c997', text: 'white' }; // Teal - Good match (50-70)
   }
-  if (normalizedScore >= 0.30) {
-    return { bg: '#F2A900', text: '#111' }; // Amber - Moderate
+  if (scorePercent >= 30) {
+    return { bg: '#ffc107', text: '#333' }; // Yellow - Moderate match (30-50)
   }
-  if (normalizedScore >= 0.10) {
-    return { bg: '#F66A0A', text: 'white' }; // Orange - Weak
+  if (scorePercent >= 10) {
+    return { bg: '#fd7e14', text: 'white' }; // Orange - Weak match (10-30)
   }
-  return { bg: '#D73A49', text: 'white' }; // Red - Very poor
+  return { bg: '#dc3545', text: 'white' }; // Red - Very poor match (0-10)
 }
 
-// Migrate existing scores to normalized [0,1] range
-async function migrateScores() {
-  try {
-    const storage = await chrome.storage.local.get(['jobs']);
-    const jobs = storage.jobs || [];
-    let updated = false;
-    
-    for (const job of jobs) {
-      if (job.matchScore !== undefined && job.matchScore !== null) {
-        const normalized = normalizeScore(job.matchScore);
-        if (Math.abs(job.matchScore - normalized) > 0.0001) {
-          job.matchScore = normalized;
-          updated = true;
-        }
-      }
-    }
-    
-    if (updated) {
-      await chrome.storage.local.set({ jobs: jobs });
-      console.log('Migrated scores to normalized [0,1] range');
-    }
-  } catch (error) {
-    console.error('Error migrating scores:', error);
-  }
+function getScoreTooltip(score) {
+  if (score >= 0.7) return '0.7 - 1.0: Excellent match (very similar content)';
+  if (score >= 0.5) return '0.5 - 0.7: Good match (strong overlap)';
+  if (score >= 0.3) return '0.3 - 0.5: Moderate match (relevant but not perfect)';
+  if (score >= 0.1) return '0.1 - 0.3: Weak match (some common terms)';
+  return '0.0 - 0.1: Very poor match (different fields/skills)';
 }
 
 function showScoreInfoModal() {
@@ -444,23 +390,23 @@ function showScoreInfoModal() {
       </div>
       <div class="score-info-modal-body">
         <div class="score-info-item">
-          <span class="score-badge score-green">0.7 - 1.0</span>
+          <span class="score-badge score-excellent">0.7 - 1.0</span>
           <span class="score-info-text">Excellent match (very similar content)</span>
         </div>
         <div class="score-info-item">
-          <span class="score-badge score-teal">0.5 - 0.7</span>
+          <span class="score-badge score-good">0.5 - 0.7</span>
           <span class="score-info-text">Good match (strong overlap)</span>
         </div>
         <div class="score-info-item">
-          <span class="score-badge score-amber">0.3 - 0.5</span>
+          <span class="score-badge score-moderate">0.3 - 0.5</span>
           <span class="score-info-text">Moderate match (relevant but not perfect)</span>
         </div>
         <div class="score-info-item">
-          <span class="score-badge score-orange">0.1 - 0.3</span>
+          <span class="score-badge score-weak">0.1 - 0.3</span>
           <span class="score-info-text">Weak match (some common terms)</span>
         </div>
         <div class="score-info-item">
-          <span class="score-badge score-red">0.0 - 0.1</span>
+          <span class="score-badge score-very-poor">0.0 - 0.1</span>
           <span class="score-info-text">Very poor match (different fields/skills)</span>
         </div>
       </div>
