@@ -17,7 +17,7 @@ JobScout is a Chrome Extension (Manifest V3) that helps you monitor LinkedIn Job
 ### Step 1: Download the Extension
 
 1. Download or clone this repository to your computer
-2. Make sure all files are in the `jobsearch` folder
+2. Make sure all files are in the `jobscout` folder
 
 ### Step 2: Load in Chrome
 
@@ -25,7 +25,7 @@ JobScout is a Chrome Extension (Manifest V3) that helps you monitor LinkedIn Job
 2. Navigate to `chrome://extensions/`
 3. Enable **Developer mode** (toggle in the top-right corner)
 4. Click **Load unpacked**
-5. Select the `jobsearch` folder
+5. Select the `jobscout` folder
 6. The extension should now appear in your extensions list
 
 ### Step 3: Set Up Icon Assets (Optional)
