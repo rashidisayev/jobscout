@@ -390,15 +390,32 @@ function calculateTF(tokens) {
 function calculateIDF(documents) {
   const idf = {};
   const totalDocs = documents.length;
+  
+  // Count how many documents contain each term
   for (const doc of documents) {
     const uniqueTerms = new Set(doc);
     for (const term of uniqueTerms) {
       idf[term] = (idf[term] || 0) + 1;
     }
   }
+  
+  // Calculate IDF with smoothing to avoid zero values
+  // Standard formula: idf(t) = log((N + 1) / (df(t) + 1))
+  // This prevents log(1) = 0 when a term appears in all documents
+  // For small document sets (like 2 docs), this gives better differentiation
   for (const term in idf) {
-    idf[term] = Math.log(totalDocs / idf[term]);
+    const docFreq = idf[term];
+    // Smoothing: add 1 to both numerator and denominator
+    // This ensures terms that appear in all docs still get a small positive IDF
+    idf[term] = Math.log((totalDocs + 1) / (docFreq + 1));
+    
+    // Ensure minimum IDF value to prevent zero weights
+    // Terms appearing in all docs get log((N+1)/(N+1)) = 0, so we add a small epsilon
+    if (idf[term] <= 0) {
+      idf[term] = 0.1; // Small positive value for common terms
+    }
   }
+  
   return idf;
 }
 
@@ -449,25 +466,36 @@ function cosineSimilarity(jobDescription, resumeText) {
     return 0;
   }
   
+  // Calculate IDF with smoothing
   const idf = calculateIDF([jobTokens, resumeTokens]);
   const jobTFIDF = calculateTFIDF(jobTokens, idf);
   const resumeTFIDF = calculateTFIDF(resumeTokens, idf);
   
+  // Calculate cosine similarity
   const similarity = calculateCosineSimilarity(jobTFIDF, resumeTFIDF);
   
-  // Debug very low scores
-  if (similarity < 0.01 && jobTokens.length > 10 && resumeTokens.length > 10) {
+  // Ensure similarity is a valid number between 0 and 1
+  const normalizedSimilarity = Math.max(0, Math.min(1, similarity));
+  
+  // Debug logging for score calculation
+  if (normalizedSimilarity < 0.01 && jobTokens.length > 10 && resumeTokens.length > 10) {
     const commonTerms = Object.keys(jobTFIDF).filter(term => resumeTFIDF[term]);
-    console.log('Low similarity score:', {
-      score: similarity,
+    const jobTFIDFValues = Object.values(jobTFIDF).filter(v => v > 0);
+    const resumeTFIDFValues = Object.values(resumeTFIDF).filter(v => v > 0);
+    console.log('Low similarity score (debug):', {
+      rawScore: similarity,
+      normalizedScore: normalizedSimilarity,
       jobTokensCount: jobTokens.length,
       resumeTokensCount: resumeTokens.length,
       commonTermsCount: commonTerms.length,
-      sampleCommonTerms: commonTerms.slice(0, 10)
+      jobTFIDFNonZero: jobTFIDFValues.length,
+      resumeTFIDFNonZero: resumeTFIDFValues.length,
+      sampleCommonTerms: commonTerms.slice(0, 10),
+      sampleIDF: Object.fromEntries(Object.entries(idf).slice(0, 5))
     });
   }
   
-  return similarity;
+  return normalizedSimilarity;
 }
 
 function getTopMatchingKeywords(jobDescription, resumeText, topN = 10) {
