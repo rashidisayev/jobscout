@@ -199,14 +199,79 @@ async function scrapeJobs(onlyNew = true, lastSeenIds = [], pageIndex = 0) {
       
       // Try multiple methods to extract company
       let company = 'Unknown';
+      
+      // Common false positives to filter out
+      const falsePositives = new Set([
+        'Page', 'View', 'Apply', 'Save', 'Share', 'More', 'Less', 'Show', 'Hide',
+        'LinkedIn', 'Jobs', 'Search', 'Filter', 'Sort', 'Results', 'Next', 'Previous',
+        'Today', 'Yesterday', 'Remote', 'On-site', 'Hybrid', 'Full-time', 'Part-time',
+        'Contract', 'Internship', 'Temporary', 'Permanent', 'United States', 'USA',
+        'Canada', 'UK', 'Europe', 'Asia', 'Location', 'Company', 'Date', 'Posted'
+      ]);
+      
+      const isValidCompany = (text) => {
+        if (!text || text.length < 2 || text.length > 50) return false;
+        // Filter out false positives
+        if (falsePositives.has(text.trim())) return false;
+        // Filter out common UI elements
+        if (text.match(/^(Page|View|Apply|Save|Share|More|Less|\d+)$/i)) return false;
+        // Filter out single words that are too common
+        if (text.match(/^(the|and|or|but|for|with|from|this|that|these|those)$/i)) return false;
+        // Should start with capital letter (company names usually do)
+        if (!/^[A-Z]/.test(text.trim())) return false;
+        return true;
+      };
+      
       const companyElement = findElement(SELECTORS.jobCompany, card);
       if (companyElement) {
-        company = companyElement.textContent.trim();
-      } else {
-        // Try to find company in card text or aria-labels
-        const cardText = card.textContent || '';
-        const companyMatch = cardText.match(/(?:Company|at)\s+([A-Z][a-zA-Z\s&]+)/);
-        if (companyMatch) company = companyMatch[1].trim();
+        const extracted = companyElement.textContent.trim();
+        if (isValidCompany(extracted)) {
+          company = extracted;
+        }
+      }
+      
+      // If still unknown, try more aggressive extraction
+      if (company === 'Unknown' || !isValidCompany(company)) {
+        // Try all links in the card that might be company
+        const allLinks = card.querySelectorAll('a');
+        for (const link of allLinks) {
+          const href = link.href || '';
+          const text = link.textContent.trim();
+          // Company links often have /company/ in URL
+          if (href.includes('/company/') && isValidCompany(text)) {
+            company = text;
+            break;
+          }
+          // Or check if it's a reasonable company name (not a button/link text)
+          if (isValidCompany(text) && 
+              !text.includes('View') && !text.includes('Apply') &&
+              !text.includes('Save') && !text.includes('Share') &&
+              !href.includes('/jobs/') && !href.includes('/search/')) {
+            company = text;
+            break;
+          }
+        }
+        
+        // Try to find company in card text
+        if (company === 'Unknown' || !isValidCompany(company)) {
+          const cardText = card.textContent || '';
+          // Look for patterns like "at CompanyName" or "CompanyName ·"
+          const patterns = [
+            /at\s+([A-Z][a-zA-Z0-9\s&.,-]+?)(?:\s+·|\s+•|$)/,
+            /([A-Z][a-zA-Z0-9\s&.,-]+?)\s+·/,
+            /Company:\s*([A-Z][a-zA-Z0-9\s&.,-]+)/i
+          ];
+          for (const pattern of patterns) {
+            const match = cardText.match(pattern);
+            if (match && match[1]) {
+              const candidate = match[1].trim();
+              if (isValidCompany(candidate)) {
+                company = candidate;
+                break;
+              }
+            }
+          }
+        }
       }
       
       // Try multiple methods to extract location
@@ -214,18 +279,40 @@ async function scrapeJobs(onlyNew = true, lastSeenIds = [], pageIndex = 0) {
       const locationElement = findElement(SELECTORS.jobLocation, card);
       if (locationElement) {
         location = locationElement.textContent.trim();
-      } else {
-        // Try to find location patterns in metadata
-        const metadataElements = card.querySelectorAll('span, li, div');
-        for (const el of metadataElements) {
+      }
+      
+      // If still unknown, try more aggressive extraction
+      if (location === 'Unknown' || !location) {
+        // Look through all text elements in the card
+        const allElements = card.querySelectorAll('span, li, div, p');
+        for (const el of allElements) {
           const text = el.textContent.trim();
-          // Look for location patterns (city, state, country, remote)
-          if (text.match(/(Remote|On-site|Hybrid|United States|Canada|UK|Europe|Asia)/i) || 
-              text.match(/^[A-Z][a-z]+,\s*[A-Z]{2}$/) || // City, State format
-              text.match(/^[A-Z][a-z]+$/)) { // Single city name
+          if (!text || text.length > 100) continue; // Skip long text
+          
+          // Location patterns
+          if (text.match(/(Remote|On-site|Hybrid|Work from home|WFH)/i)) {
             location = text;
             break;
           }
+          // City, State format (e.g., "San Francisco, CA")
+          if (text.match(/^[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?,\s*[A-Z]{2}$/)) {
+            location = text;
+            break;
+          }
+          // Country names
+          if (text.match(/^(United States|USA|Canada|UK|United Kingdom|Europe|Asia|Australia|Germany|France|Spain|Italy)$/i)) {
+            location = text;
+            break;
+          }
+          // City names (common tech cities)
+          const techCities = ['San Francisco', 'New York', 'Seattle', 'Austin', 'Boston', 'Chicago', 'Los Angeles', 'Denver', 'Atlanta', 'London', 'Toronto', 'Vancouver', 'Sydney', 'Melbourne'];
+          for (const city of techCities) {
+            if (text.includes(city)) {
+              location = text;
+              break;
+            }
+          }
+          if (location !== 'Unknown') break;
         }
       }
       
@@ -257,25 +344,92 @@ async function scrapeJobs(onlyNew = true, lastSeenIds = [], pageIndex = 0) {
         if (dateMatch) datePosted = dateMatch[1];
       }
       
+      // If we still have unknowns, try extracting from card's full text structure
+      if (company === 'Unknown' || location === 'Unknown' || datePosted === 'Unknown') {
+        const cardText = card.innerText || card.textContent || '';
+        const cardHTML = card.innerHTML || '';
+        
+        // More aggressive company extraction
+        if (company === 'Unknown' || !isValidCompany(company)) {
+          // Look for company name patterns in the card
+          const lines = cardText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+          // Company is usually on the second or third line after title
+          for (let i = 1; i < Math.min(5, lines.length); i++) {
+            const line = lines[i];
+            // Skip if it looks like a location or date
+            if (line.match(/(Remote|ago|days|weeks|months|Today|Yesterday|Page|View|Apply)/i)) continue;
+            // Skip if it's too long (likely description)
+            if (line.length > 50) continue;
+            // Validate it's a real company name
+            if (isValidCompany(line)) {
+              company = line;
+              break;
+            }
+          }
+        }
+        
+        // More aggressive location extraction
+        if (location === 'Unknown') {
+          // Look through all text nodes
+          const allText = cardText.split(/\s+/);
+          for (let i = 0; i < allText.length - 1; i++) {
+            const word = allText[i];
+            const nextWord = allText[i + 1];
+            // Check for "City, State" pattern
+            if (word.match(/^[A-Z][a-z]+$/) && nextWord && nextWord.match(/^[A-Z]{2}$/)) {
+              location = `${word}, ${nextWord}`;
+              break;
+            }
+            // Check for location keywords
+            if (word.match(/^(Remote|On-site|Hybrid|United|States|Canada|UK|Europe|Asia)$/i)) {
+              location = word;
+              if (nextWord && nextWord.match(/^States$/i)) {
+                location = 'United States';
+              }
+              break;
+            }
+          }
+        }
+        
+        // More aggressive date extraction
+        if (datePosted === 'Unknown') {
+          // Look for date patterns in text
+          const datePatterns = [
+            /(\d+\s+(day|week|month)s?\s+ago)/i,
+            /(Just now|Today|Yesterday)/i,
+            /(Posted\s+(\d+\s+(day|week|month)s?\s+ago))/i
+          ];
+          for (const pattern of datePatterns) {
+            const match = cardText.match(pattern);
+            if (match) {
+              datePosted = match[1] || match[0];
+              break;
+            }
+          }
+        }
+        
+        // Debug logging
+        if (company === 'Unknown' || location === 'Unknown' || datePosted === 'Unknown') {
+          console.log('Job card extraction - still missing fields:', {
+            title,
+            company,
+            location,
+            datePosted,
+            cardTextSample: cardText.substring(0, 300),
+            cardStructure: Array.from(card.children).map(c => c.tagName + (c.className ? '.' + c.className.split(' ')[0] : '')).join(' > ')
+          });
+        }
+      }
+      
+      // Create job data object with final extracted values
       const jobData = {
         link: jobLink,
         id: jobId,
         title,
-        company,
-        location,
-        datePosted
+        company: company || 'Unknown',
+        location: location || 'Unknown',
+        datePosted: datePosted || 'Unknown'
       };
-      
-      // Debug logging
-      if (company === 'Unknown' || location === 'Unknown' || datePosted === 'Unknown') {
-        console.log('Job card extraction - some fields missing:', {
-          title,
-          company,
-          location,
-          datePosted,
-          cardHtml: card.outerHTML.substring(0, 200)
-        });
-      }
       
       jobLinks.push(jobData);
     } catch (error) {
@@ -284,29 +438,31 @@ async function scrapeJobs(onlyNew = true, lastSeenIds = [], pageIndex = 0) {
   }
   
   // For each job, navigate to detail page and extract full description
+  // Note: We'll extract from detail pages, but this requires navigation
+  // For now, let's improve the card extraction and use detail page as fallback
   for (const jobInfo of jobLinks) {
     try {
-      // Navigate to job detail
+      // Try to get data from detail page
       const result = await getJobDescription(jobInfo.link);
       
-      // Use extracted data from detail page if search results data is missing
+      // Use extracted data from detail page, prioritizing detail page data
       let finalCompany = jobInfo.company;
       let finalLocation = jobInfo.location;
       let finalDate = jobInfo.datePosted;
       
       if (result.extractors) {
-        // Always try to get better data from detail page
+        // Always prefer detail page data if available
         const detailCompany = result.extractors.getCompany();
         const detailLocation = result.extractors.getLocation();
         const detailDate = result.extractors.getDate();
         
-        if (detailCompany && (finalCompany === 'Unknown' || !finalCompany)) {
+        if (detailCompany) {
           finalCompany = detailCompany;
         }
-        if (detailLocation && (finalLocation === 'Unknown' || !finalLocation)) {
+        if (detailLocation) {
           finalLocation = detailLocation;
         }
-        if (detailDate && (finalDate === 'Unknown' || !finalDate)) {
+        if (detailDate) {
           finalDate = detailDate;
         }
       }
@@ -320,23 +476,22 @@ async function scrapeJobs(onlyNew = true, lastSeenIds = [], pageIndex = 0) {
       };
       
       // Debug logging for final data
-      if (finalJobInfo.company === 'Unknown' || finalJobInfo.location === 'Unknown') {
-        console.log('Final job info after detail page extraction:', {
-          title: finalJobInfo.title,
-          company: finalJobInfo.company,
-          location: finalJobInfo.location,
-          datePosted: finalJobInfo.datePosted,
-          hasDescription: !!finalJobInfo.description
-        });
-      }
+      console.log('Job extracted:', {
+        title: finalJobInfo.title,
+        company: finalJobInfo.company,
+        location: finalJobInfo.location,
+        datePosted: finalJobInfo.datePosted,
+        hasDescription: !!finalJobInfo.description,
+        descriptionLength: finalJobInfo.description?.length || 0
+      });
       
       jobs.push(finalJobInfo);
       
       // Random delay between job fetches
-      await sleep(randomDelay(1500, 3000));
+      await sleep(randomDelay(2000, 4000));
     } catch (error) {
       console.error(`Error fetching description for ${jobInfo.link}:`, error);
-      // Still add job without description
+      // Still add job with whatever data we have
       jobs.push(jobInfo);
     }
   }
@@ -347,8 +502,20 @@ async function scrapeJobs(onlyNew = true, lastSeenIds = [], pageIndex = 0) {
 // Get full job description and extract missing metadata from detail page
 async function getJobDescription(jobUrl) {
   // Use fetch to get the page content (same origin)
+  // Note: LinkedIn may serve content via JavaScript, so this might not get everything
   try {
-    const response = await fetch(jobUrl);
+    const response = await fetch(jobUrl, {
+      headers: {
+        'Accept': 'text/html',
+        'X-Requested-With': 'XMLHttpRequest'
+      }
+    });
+    
+    if (!response.ok) {
+      console.warn(`Failed to fetch ${jobUrl}: ${response.status}`);
+      return { description: '', extractors: null };
+    }
+    
     const html = await response.text();
     const parser = new DOMParser();
     const doc = parser.parseFromString(html, 'text/html');
@@ -363,49 +530,136 @@ async function getJobDescription(jobUrl) {
       const element = doc.querySelector(selector);
       if (element) {
         description = element.textContent.trim();
-        break;
+        if (description.length > 50) break; // Need meaningful description
       }
     }
     
-    return {
-      description: description,
-      // Return metadata extractors for use in main function
-      extractors: {
-        getCompany: () => {
-          const companySelectors = Array.isArray(SELECTORS.jobDetailCompany)
-            ? SELECTORS.jobDetailCompany
-            : [SELECTORS.jobDetailCompany];
-          for (const selector of companySelectors) {
-            const element = doc.querySelector(selector);
-            if (element) return element.textContent.trim();
+    // Extract company with multiple fallbacks
+    const getCompany = () => {
+      const falsePositives = new Set(['Page', 'View', 'Apply', 'Save', 'Share', 'More', 'Less', 'LinkedIn', 'Jobs']);
+      const isValidCompany = (text) => {
+        if (!text || text.length < 2 || text.length > 50) return false;
+        if (falsePositives.has(text.trim())) return false;
+        if (text.match(/^(Page|View|Apply|Save|Share|More|Less|\d+)$/i)) return false;
+        return /^[A-Z]/.test(text.trim());
+      };
+      
+      const companySelectors = Array.isArray(SELECTORS.jobDetailCompany)
+        ? SELECTORS.jobDetailCompany
+        : [SELECTORS.jobDetailCompany];
+      for (const selector of companySelectors) {
+        const element = doc.querySelector(selector);
+        if (element) {
+          const text = element.textContent.trim();
+          if (isValidCompany(text)) return text;
+        }
+      }
+      // Fallback: look for company links
+      const companyLinks = doc.querySelectorAll('a[href*="/company/"]');
+      for (const link of companyLinks) {
+        const text = link.textContent.trim();
+        if (isValidCompany(text)) return text;
+      }
+      // Fallback: try to find in page text
+      const pageText = doc.body.textContent || '';
+      const patterns = [
+        /Company[:\s]+([A-Z][a-zA-Z0-9\s&.,-]+)/i,
+        /at\s+([A-Z][a-zA-Z0-9\s&.,-]+?)(?:\s+·|\s+•|$)/,
+        /([A-Z][a-zA-Z0-9\s&.,-]+?)\s+·\s*[A-Z]/
+      ];
+      for (const pattern of patterns) {
+        const match = pageText.match(pattern);
+        if (match && match[1]) {
+          const candidate = match[1].trim();
+          if (isValidCompany(candidate)) {
+            return candidate;
           }
-          return null;
-        },
-        getLocation: () => {
-          const locationSelectors = Array.isArray(SELECTORS.jobDetailLocation)
-            ? SELECTORS.jobDetailLocation
-            : [SELECTORS.jobDetailLocation];
-          for (const selector of locationSelectors) {
-            const element = doc.querySelector(selector);
-            if (element) return element.textContent.trim();
-          }
-          return null;
-        },
-        getDate: () => {
-          const dateSelectors = Array.isArray(SELECTORS.jobDetailDate)
-            ? SELECTORS.jobDetailDate
-            : [SELECTORS.jobDetailDate];
-          for (const selector of dateSelectors) {
-            const element = doc.querySelector(selector);
-            if (element) {
-              const text = element.textContent.trim();
-              // Try to get datetime attribute if it's a time element
-              const datetime = element.getAttribute('datetime');
-              return datetime || text;
+        }
+      }
+      return null;
+    };
+    
+    // Extract location with multiple fallbacks
+    const getLocation = () => {
+      const locationSelectors = Array.isArray(SELECTORS.jobDetailLocation)
+        ? SELECTORS.jobDetailLocation
+        : [SELECTORS.jobDetailLocation];
+      for (const selector of locationSelectors) {
+        const element = doc.querySelector(selector);
+        if (element) {
+          const text = element.textContent.trim();
+          if (text) return text;
+        }
+      }
+      // Fallback: look for location patterns in all elements
+      const allElements = doc.querySelectorAll('li, span, div, p');
+      for (const el of allElements) {
+        const text = el.textContent.trim();
+        if (!text || text.length > 100) continue;
+        if (text.match(/(Remote|On-site|Hybrid|Work from home|WFH)/i) ||
+            text.match(/^[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?,\s*[A-Z]{2}$/) ||
+            text.match(/^(United States|USA|Canada|UK|United Kingdom|Europe|Asia|Australia)$/i)) {
+          return text;
+        }
+      }
+      return null;
+    };
+    
+    // Extract date with multiple fallbacks
+    const getDate = () => {
+      const dateSelectors = Array.isArray(SELECTORS.jobDetailDate)
+        ? SELECTORS.jobDetailDate
+        : [SELECTORS.jobDetailDate];
+      for (const selector of dateSelectors) {
+        const element = doc.querySelector(selector);
+        if (element) {
+          const text = element.textContent.trim();
+          const datetime = element.getAttribute('datetime');
+          if (datetime) {
+            try {
+              const date = new Date(datetime);
+              const now = new Date();
+              const diffDays = Math.floor((now - date) / (1000 * 60 * 60 * 24));
+              if (diffDays === 0) return 'Today';
+              else if (diffDays === 1) return '1 day ago';
+              else if (diffDays < 7) return `${diffDays} days ago`;
+              else if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
+              else return `${Math.floor(diffDays / 30)} months ago`;
+            } catch (e) {
+              return text;
             }
           }
-          return null;
+          if (text) return text;
         }
+      }
+      // Fallback: look for all time elements
+      const timeElements = doc.querySelectorAll('time[datetime]');
+      for (const el of timeElements) {
+        const datetime = el.getAttribute('datetime');
+        if (datetime) {
+          try {
+            const date = new Date(datetime);
+            const now = new Date();
+            const diffDays = Math.floor((now - date) / (1000 * 60 * 60 * 24));
+            if (diffDays === 0) return 'Today';
+            else if (diffDays === 1) return '1 day ago';
+            else if (diffDays < 7) return `${diffDays} days ago`;
+            else if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
+            else return `${Math.floor(diffDays / 30)} months ago`;
+          } catch (e) {
+            return el.textContent.trim();
+          }
+        }
+      }
+      return null;
+    };
+    
+    return {
+      description: description,
+      extractors: {
+        getCompany: getCompany,
+        getLocation: getLocation,
+        getDate: getDate
       }
     };
   } catch (error) {

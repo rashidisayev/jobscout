@@ -304,12 +304,12 @@ function displayResults(jobs) {
       ${jobs.map(job => `
         <tr>
           <td>${escapeHtml(job.title || 'N/A')}</td>
-          <td>${escapeHtml(job.company || 'N/A')}</td>
-          <td>${escapeHtml(job.location || 'N/A')}</td>
-          <td>${escapeHtml(job.datePosted || 'N/A')}</td>
+          <td>${escapeHtml(job.company && job.company !== 'Unknown' ? job.company : 'N/A')}</td>
+          <td>${escapeHtml(job.location && job.location !== 'Unknown' ? job.location : 'N/A')}</td>
+          <td>${escapeHtml(job.datePosted && job.datePosted !== 'Unknown' ? job.datePosted : 'N/A')}</td>
           <td>${escapeHtml(job.bestResume || 'N/A')}</td>
           <td>
-            ${job.matchScore !== undefined ? `
+            ${job.matchScore !== undefined && job.matchScore !== null ? `
               <span class="score-badge ${getScoreClass(job.matchScore)}">
                 ${(job.matchScore * 100).toFixed(1)}%
               </span>
