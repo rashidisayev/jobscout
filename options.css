@@ -313,51 +313,84 @@ table tr:hover {
 /* Score badge base styles */
 .score-badge {
   display: inline-block;
-  padding: 4px 10px;
-  border-radius: 12px;
+  padding: 4px 8px;
+  border-radius: 6px;
   font-weight: 600;
   font-size: 12px;
   cursor: help;
   position: relative;
   transition: all 0.2s ease;
+  color: #fff;
+  min-width: 64px;
+  text-align: center;
   background: #e0e0e0; /* Default gray background */
+}
+
+/* Score range colors - new color scheme */
+table td .score-badge.score-red,
+.score-badge.score-red {
+  background-color: #D73A49 !important; /* Red - Very poor match (0.0 - 0.1) */
+  color: white !important;
+  border: none !important;
+}
+
+table td .score-badge.score-orange,
+.score-badge.score-orange {
+  background-color: #F66A0A !important; /* Orange - Weak match (0.1 - 0.3) */
+  color: white !important;
+  border: none !important;
+}
+
+table td .score-badge.score-amber,
+.score-badge.score-amber {
+  background-color: #F2A900 !important; /* Amber - Moderate match (0.3 - 0.5) */
+  color: #111 !important; /* Better contrast */
+  border: none !important;
+}
+
+table td .score-badge.score-teal,
+.score-badge.score-teal {
+  background-color: #2CA6A4 !important; /* Teal - Good match (0.5 - 0.7) */
+  color: white !important;
+  border: none !important;
+}
+
+table td .score-badge.score-green,
+.score-badge.score-green {
+  background-color: #1F9D55 !important; /* Green - Excellent match (0.7 - 1.0) */
+  color: white !important;
+  border: none !important;
+}
+
+/* Score legend */
+.score-legend {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+  padding: 12px;
+  background: #f9f9f9;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.legend-label {
+  font-weight: 600;
   color: #333;
 }
 
-/* Score range colors - gradient from red (poor) to green (excellent) */
-table td .score-badge.score-very-poor,
-.score-badge.score-very-poor {
-  background-color: #dc3545 !important; /* Red - Very poor match (0.0 - 0.1) */
-  color: white !important;
-  border: none !important;
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #666;
 }
 
-table td .score-badge.score-weak,
-.score-badge.score-weak {
-  background-color: #fd7e14 !important; /* Orange - Weak match (0.1 - 0.3) */
-  color: white !important;
-  border: none !important;
-}
-
-table td .score-badge.score-moderate,
-.score-badge.score-moderate {
-  background-color: #ffc107 !important; /* Yellow - Moderate match (0.3 - 0.5) */
-  color: #333 !important;
-  border: none !important;
-}
-
-table td .score-badge.score-good,
-.score-badge.score-good {
-  background-color: #20c997 !important; /* Teal - Good match (0.5 - 0.7) */
-  color: white !important;
-  border: none !important;
-}
-
-table td .score-badge.score-excellent,
-.score-badge.score-excellent {
-  background-color: #28a745 !important; /* Green - Excellent match (0.7 - 1.0) */
-  color: white !important;
-  border: none !important;
+.legend-item .score-badge {
+  min-width: auto;
+  padding: 2px 6px;
+  font-size: 11px;
 }
 
 /* Enhanced tooltip on hover */

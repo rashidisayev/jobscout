@@ -297,6 +297,24 @@ function addStartParameter(url, start) {
   }
 }
 
+// Normalize score to [0,1] range, handling various input scales
+function normalizeScore(raw) {
+  let s = Number(raw);
+  if (!isFinite(s) || s < 0) s = 0;
+  
+  // Heuristics for common mistaken scales
+  if (s > 1) {
+    if (s <= 5) s = s / 5;        // 0..5 scale
+    else if (s <= 100) s = s / 100; // percentage 0..100
+    else s = 1;
+  }
+  
+  // Clamp
+  if (s > 1) s = 1;
+  if (s < 0) s = 0;
+  return s;
+}
+
 // Handle job results: deduplicate, match with resumes, store
 // Returns count of new jobs added
 async function handleJobResults(jobs) {
@@ -327,7 +345,9 @@ async function handleJobResults(jobs) {
           
           // Always set bestResume if we have a match, even if score is 0
           job.bestResume = match.filename || null;
-          job.matchScore = match.score !== undefined && match.score !== null ? match.score : 0;
+          // Normalize score to [0,1] range before storing
+          const rawScore = match.score !== undefined && match.score !== null ? match.score : 0;
+          job.matchScore = normalizeScore(rawScore);
           job.topKeywords = match.topKeywords || [];
           
           // Debug logging
@@ -746,7 +766,9 @@ chrome.storage.onChanged.addListener(async (changes, areaName) => {
             
             if (match.filename) {
               job.bestResume = match.filename;
-              job.matchScore = match.score !== undefined && match.score !== null ? match.score : 0;
+              // Normalize score to [0,1] range before storing
+              const rawScore = match.score !== undefined && match.score !== null ? match.score : 0;
+              job.matchScore = normalizeScore(rawScore);
               job.topKeywords = match.topKeywords || [];
               updatedCount++;
             }
