@@ -279,11 +279,40 @@ async function handleJobResults(jobs) {
       newJobIds.add(jobId);
       
       // Match with resumes if available
-      if (resumes.length > 0 && job.description) {
-        const match = await matchResumeToJob(job.description, resumes);
-        job.bestResume = match.filename;
-        job.matchScore = match.score;
-        job.topKeywords = match.topKeywords;
+      if (resumes.length > 0) {
+        // Use description if available, otherwise use title + company as fallback
+        const textToMatch = job.description || `${job.title || ''} ${job.company || ''}`.trim();
+        if (textToMatch && textToMatch.length > 10) { // Need meaningful text to match
+          const match = await matchResumeToJob(textToMatch, resumes);
+          job.bestResume = match.filename || null;
+          job.matchScore = match.score || 0;
+          job.topKeywords = match.topKeywords || [];
+          
+          // Debug logging
+          if (match.score === 0) {
+            console.log('Zero score match:', {
+              jobTitle: job.title,
+              hasDescription: !!job.description,
+              descriptionLength: job.description?.length || 0,
+              textToMatchLength: textToMatch.length,
+              resumeCount: resumes.length,
+              resumeTextLengths: resumes.map(r => r.text?.length || 0)
+            });
+          }
+        } else {
+          console.log('Skipping match - insufficient text:', {
+            jobTitle: job.title,
+            hasDescription: !!job.description,
+            textToMatchLength: textToMatch?.length || 0
+          });
+          job.bestResume = null;
+          job.matchScore = 0;
+          job.topKeywords = [];
+        }
+      } else {
+        job.bestResume = null;
+        job.matchScore = 0;
+        job.topKeywords = [];
       }
       
       job.id = jobId;
@@ -381,15 +410,46 @@ function calculateCosineSimilarity(vec1, vec2) {
 }
 
 function cosineSimilarity(jobDescription, resumeText) {
-  const jobTokens = tokenize(jobDescription);
-  const resumeTokens = tokenize(resumeText);
-  if (jobTokens.length === 0 || resumeTokens.length === 0) {
+  if (!jobDescription || !resumeText) {
+    console.log('Missing text for similarity:', { 
+      hasJobDesc: !!jobDescription, 
+      hasResume: !!resumeText 
+    });
     return 0;
   }
+  
+  const jobTokens = tokenize(jobDescription);
+  const resumeTokens = tokenize(resumeText);
+  
+  if (jobTokens.length === 0 || resumeTokens.length === 0) {
+    console.log('Empty tokens after tokenization:', {
+      jobTokensCount: jobTokens.length,
+      resumeTokensCount: resumeTokens.length,
+      jobDescSample: jobDescription.substring(0, 100),
+      resumeSample: resumeText.substring(0, 100)
+    });
+    return 0;
+  }
+  
   const idf = calculateIDF([jobTokens, resumeTokens]);
   const jobTFIDF = calculateTFIDF(jobTokens, idf);
   const resumeTFIDF = calculateTFIDF(resumeTokens, idf);
-  return calculateCosineSimilarity(jobTFIDF, resumeTFIDF);
+  
+  const similarity = calculateCosineSimilarity(jobTFIDF, resumeTFIDF);
+  
+  // Debug very low scores
+  if (similarity < 0.01 && jobTokens.length > 10 && resumeTokens.length > 10) {
+    const commonTerms = Object.keys(jobTFIDF).filter(term => resumeTFIDF[term]);
+    console.log('Low similarity score:', {
+      score: similarity,
+      jobTokensCount: jobTokens.length,
+      resumeTokensCount: resumeTokens.length,
+      commonTermsCount: commonTerms.length,
+      sampleCommonTerms: commonTerms.slice(0, 10)
+    });
+  }
+  
+  return similarity;
 }
 
 function getTopMatchingKeywords(jobDescription, resumeText, topN = 10) {
@@ -417,8 +477,16 @@ function getTopMatchingKeywords(jobDescription, resumeText, topN = 10) {
 async function matchResumeToJob(jobDescription, resumes) {
   let bestMatch = { filename: null, score: 0, topKeywords: [] };
   
+  if (!jobDescription || jobDescription.trim().length < 10) {
+    console.log('Job description too short for matching');
+    return bestMatch;
+  }
+  
   for (const resume of resumes) {
-    if (!resume.text) continue;
+    if (!resume.text || resume.text.trim().length < 10) {
+      console.log(`Skipping resume ${resume.filename} - text too short or missing`);
+      continue;
+    }
     
     const score = cosineSimilarity(jobDescription, resume.text);
     
@@ -430,6 +498,15 @@ async function matchResumeToJob(jobDescription, resumes) {
         topKeywords: topKeywords
       };
     }
+  }
+  
+  // Log if no good match found
+  if (bestMatch.score === 0 && resumes.length > 0) {
+    console.log('No match found above 0:', {
+      resumesChecked: resumes.length,
+      jobDescLength: jobDescription.length,
+      resumeTextLengths: resumes.map(r => r.text?.length || 0)
+    });
   }
   
   return bestMatch;

@@ -16,6 +16,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   
   document.getElementById('saveSettings').addEventListener('click', saveSettings);
   document.getElementById('exportCsv').addEventListener('click', exportCsv);
+  document.getElementById('clearAllJobs').addEventListener('click', clearAllJobs);
   document.getElementById('sortBy').addEventListener('change', loadResults);
   document.getElementById('filterText').addEventListener('input', loadResults);
   
@@ -344,6 +345,40 @@ async function exportCsv() {
   }
   
   exportModule.exportToCsv(jobs);
+}
+
+// Clear all jobs
+async function clearAllJobs() {
+  const settings = await chrome.storage.local.get(['jobs']);
+  const jobs = settings.jobs || [];
+  
+  if (jobs.length === 0) {
+    alert('No jobs to clear');
+    return;
+  }
+  
+  // Confirm before clearing
+  const confirmed = confirm(`Are you sure you want to delete all ${jobs.length} jobs? This action cannot be undone.`);
+  
+  if (!confirmed) {
+    return;
+  }
+  
+  try {
+    // Clear jobs and reset last seen job IDs
+    await chrome.storage.local.set({
+      jobs: [],
+      lastSeenJobIds: []
+    });
+    
+    // Reload results to show empty state
+    await loadResults();
+    
+    alert('All jobs have been cleared successfully.');
+  } catch (error) {
+    console.error('Error clearing jobs:', error);
+    alert('Error clearing jobs. Please try again.');
+  }
 }
 
 // Utility functions
