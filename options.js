@@ -314,13 +314,15 @@ function displayResults(jobs) {
           <td>
             ${job.matchScore !== undefined && job.matchScore !== null ? (() => {
               const score = job.matchScore;
+              // Convert to percentage for display and color calculation
+              const scorePercent = score * 100;
               const scoreClass = getScoreClass(score);
-              const scoreColor = getScoreColor(score);
+              const scoreColor = getScoreColor(scorePercent);
               return `
                 <span class="score-badge ${scoreClass}" 
                       data-score="${score}"
                       style="background-color: ${scoreColor.bg} !important; color: ${scoreColor.text} !important; border: none !important;">
-                  ${(score * 100).toFixed(1)}
+                  ${scorePercent.toFixed(1)}
                 </span>
               `;
             })() : 'N/A'}
@@ -351,20 +353,21 @@ function getScoreClass(score) {
   return 'score-very-poor';
 }
 
-function getScoreColor(score) {
-  if (score >= 0.7) {
-    return { bg: '#28a745', text: 'white' }; // Green - Excellent match
+function getScoreColor(scorePercent) {
+  // scorePercent is 0-100 (percentage value)
+  if (scorePercent >= 70) {
+    return { bg: '#28a745', text: 'white' }; // Green - Excellent match (70-100)
   }
-  if (score >= 0.5) {
-    return { bg: '#20c997', text: 'white' }; // Teal - Good match
+  if (scorePercent >= 50) {
+    return { bg: '#20c997', text: 'white' }; // Teal - Good match (50-70)
   }
-  if (score >= 0.3) {
-    return { bg: '#ffc107', text: '#333' }; // Yellow - Moderate match
+  if (scorePercent >= 30) {
+    return { bg: '#ffc107', text: '#333' }; // Yellow - Moderate match (30-50)
   }
-  if (score >= 0.1) {
-    return { bg: '#fd7e14', text: 'white' }; // Orange - Weak match
+  if (scorePercent >= 10) {
+    return { bg: '#fd7e14', text: 'white' }; // Orange - Weak match (10-30)
   }
-  return { bg: '#dc3545', text: 'white' }; // Red - Very poor match
+  return { bg: '#dc3545', text: 'white' }; // Red - Very poor match (0-10)
 }
 
 function getScoreTooltip(score) {
