@@ -204,7 +204,22 @@ To modify or extend the extension:
 
 For issues, questions, or contributions, please refer to the project repository.
 
+## Contributing
+
+If you find JobScout useful and would like to support its development, consider:
+
+- ⭐ Starring the repository
+- 🐛 Reporting bugs or suggesting features
+- 💡 Contributing code improvements
+- ☕ [Buy me a coffee](https://www.paypal.com/paypalme/rashidisayev) - Support the developer
+
+Your support helps maintain and improve this project!
+
 ## License
 
 This project is provided as-is for personal use. Please ensure compliance with LinkedIn's Terms of Service when using this extension.
+
+---
+
+**Developed by Rashid Isayev** | [Email](mailto:rashidisayev@gmail.com) | [Support via PayPal](https://www.paypal.com/paypalme/rashidisayev)
 
