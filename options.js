@@ -319,8 +319,8 @@ function displayResults(jobs) {
               return `
                 <span class="score-badge ${scoreClass}" 
                       data-score="${score}"
-                      style="background-color: ${scoreColor.bg} !important; color: ${scoreColor.text} !important;">
-                  ${(score * 100).toFixed(1)}%
+                      style="background-color: ${scoreColor.bg} !important; color: ${scoreColor.text} !important; border: none !important;">
+                  ${(score * 100).toFixed(1)}
                 </span>
               `;
             })() : 'N/A'}
