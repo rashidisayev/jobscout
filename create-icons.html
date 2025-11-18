@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Create JobScout Icons</title>
+</head>
+<body>
+  <h1>JobScout Icon Generator</h1>
+  <p>This page will generate simple placeholder icons for the extension.</p>
+  <button onclick="generateIcons()">Generate Icons</button>
+  <div id="output"></div>
+  
+  <script>
+    function generateIcons() {
+      const sizes = [16, 48, 128];
+      const output = document.getElementById('output');
+      output.innerHTML = '<h2>Right-click each image and "Save Image As" to the assets folder:</h2>';
+      
+      sizes.forEach(size => {
+        const canvas = document.createElement('canvas');
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext('2d');
+        
+        // Draw background (LinkedIn blue)
+        ctx.fillStyle = '#0077b5';
+        ctx.fillRect(0, 0, size, size);
+        
+        // Draw white circle for magnifying glass
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = Math.max(1, size / 16);
+        ctx.beginPath();
+        ctx.arc(size * 0.4, size * 0.4, size * 0.25, 0, Math.PI * 2);
+        ctx.stroke();
+        
+        // Draw handle
+        ctx.beginPath();
+        ctx.moveTo(size * 0.6, size * 0.6);
+        ctx.lineTo(size * 0.8, size * 0.8);
+        ctx.stroke();
+        
+        const img = document.createElement('img');
+        img.src = canvas.toDataURL('image/png');
+        img.style.border = '1px solid #ccc';
+        img.style.margin = '10px';
+        const link = document.createElement('a');
+        link.href = canvas.toDataURL('image/png');
+        link.download = `icon${size}.png`;
+        link.appendChild(img);
+        link.appendChild(document.createTextNode(` icon${size}.png`));
+        output.appendChild(link);
+        output.appendChild(document.createElement('br'));
+      });
+    }
+  </script>
+</body>
+</html>
+

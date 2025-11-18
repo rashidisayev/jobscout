@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>JobScout Options</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>🔍 JobScout Settings</h1>
+      <p class="subtitle">Configure your job search monitoring</p>
+    </header>
+    
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="searches">Search URLs</button>
+      <button class="tab-btn" data-tab="resumes">Resumes</button>
+      <button class="tab-btn" data-tab="settings">Settings</button>
+      <button class="tab-btn" data-tab="results">Results</button>
+    </div>
+    
+    <!-- Search URLs Tab -->
+    <div class="tab-content active" id="searches-tab">
+      <section class="section">
+        <h2>LinkedIn Job Search URLs</h2>
+        <p class="help-text">Add LinkedIn job search URLs. You can copy these from your browser after performing a search on LinkedIn Jobs.</p>
+        
+        <div class="input-group">
+          <input type="text" id="newSearchUrl" placeholder="https://www.linkedin.com/jobs/search/..." />
+          <button id="addSearchUrl" class="btn btn-primary">Add URL</button>
+        </div>
+        
+        <div id="searchUrlsList" class="list"></div>
+      </section>
+    </div>
+    
+    <!-- Resumes Tab -->
+    <div class="tab-content" id="resumes-tab">
+      <section class="section">
+        <h2>Resume Management</h2>
+        <p class="help-text">Upload up to 5 resumes (PDF, DOCX, or TXT). The extension will match job descriptions with your resumes.</p>
+        
+        <div id="resumesList" class="resumes-grid"></div>
+      </section>
+    </div>
+    
+    <!-- Settings Tab -->
+    <div class="tab-content" id="settings-tab">
+      <section class="section">
+        <h2>Scanning Settings</h2>
+        
+        <div class="setting-item">
+          <label>
+            <span>Scan Interval (minutes)</span>
+            <input type="number" id="scanInterval" min="15" max="1440" value="60" />
+          </label>
+        </div>
+        
+        <div class="setting-item">
+          <label class="checkbox-label">
+            <input type="checkbox" id="onlyNewRoles" checked />
+            <span>Only show new roles since last scan</span>
+          </label>
+        </div>
+        
+        <button id="saveSettings" class="btn btn-primary">Save Settings</button>
+      </section>
+    </div>
+    
+    <!-- Results Tab -->
+    <div class="tab-content" id="results-tab">
+      <section class="section">
+        <h2>Job Results</h2>
+        
+        <div class="results-controls">
+          <div class="filter-group">
+            <label>Sort by:</label>
+            <select id="sortBy">
+              <option value="date">Date Found</option>
+              <option value="score">Match Score</option>
+              <option value="company">Company</option>
+            </select>
+          </div>
+          
+          <div class="filter-group">
+            <label>Filter:</label>
+            <input type="text" id="filterText" placeholder="Search jobs..." />
+          </div>
+          
+          <button id="exportCsv" class="btn btn-secondary">Export CSV</button>
+        </div>
+        
+        <div id="resultsTable" class="results-table"></div>
+      </section>
+    </div>
+    
+    <!-- Live Scanning Status -->
+    <div id="liveScanStatus" class="live-scan-status" style="display: none;">
+      <h3>Scanning Status</h3>
+      <div class="status-grid">
+        <div class="status-item">
+          <span class="status-label">Status:</span>
+          <span class="status-value" id="liveStatusText">Idle</span>
+        </div>
+        <div class="status-item">
+          <span class="status-label">Pages Processed:</span>
+          <span class="status-value" id="livePagesProcessed">0</span>
+        </div>
+        <div class="status-item">
+          <span class="status-label">Jobs Scanned:</span>
+          <span class="status-value" id="liveJobsScanned">0</span>
+        </div>
+        <div class="status-item">
+          <span class="status-label">New Jobs This Run:</span>
+          <span class="status-value" id="liveNewJobs">0</span>
+        </div>
+      </div>
+    </div>
+    
+    <footer>
+      <p class="disclaimer">
+        <strong>Privacy & Terms:</strong> JobScout runs locally in your browser. 
+        You must be logged into LinkedIn for it to work. 
+        Please use this extension responsibly and in accordance with LinkedIn's Terms of Service.
+      </p>
+      <p class="developer-info">
+        Developed by <strong>Rashid Isayev</strong> — <a href="mailto:rashidisayev@gmail.com">rashidisayev@gmail.com</a>
+      </p>
+    </footer>
+  </div>
+  
+  <script src="options.js"></script>
+</body>
+</html>
+
