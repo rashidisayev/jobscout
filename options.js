@@ -315,9 +315,11 @@ function displayResults(jobs) {
             ${job.matchScore !== undefined && job.matchScore !== null ? (() => {
               const score = job.matchScore;
               const scoreClass = getScoreClass(score);
+              const scoreColor = getScoreColor(score);
               return `
                 <span class="score-badge ${scoreClass}" 
-                      data-score="${score}">
+                      data-score="${score}"
+                      style="background-color: ${scoreColor.bg} !important; color: ${scoreColor.text} !important;">
                   ${(score * 100).toFixed(1)}%
                 </span>
               `;
@@ -347,6 +349,22 @@ function getScoreClass(score) {
   if (score >= 0.3) return 'score-moderate';
   if (score >= 0.1) return 'score-weak';
   return 'score-very-poor';
+}
+
+function getScoreColor(score) {
+  if (score >= 0.7) {
+    return { bg: '#28a745', text: 'white' }; // Green - Excellent match
+  }
+  if (score >= 0.5) {
+    return { bg: '#20c997', text: 'white' }; // Teal - Good match
+  }
+  if (score >= 0.3) {
+    return { bg: '#ffc107', text: '#333' }; // Yellow - Moderate match
+  }
+  if (score >= 0.1) {
+    return { bg: '#fd7e14', text: 'white' }; // Orange - Weak match
+  }
+  return { bg: '#dc3545', text: 'white' }; // Red - Very poor match
 }
 
 function getScoreTooltip(score) {
