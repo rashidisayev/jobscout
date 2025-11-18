@@ -280,30 +280,48 @@ async function handleJobResults(jobs) {
       
       // Match with resumes if available
       if (resumes.length > 0) {
-        // Use description if available, otherwise use title + company as fallback
-        const textToMatch = job.description || `${job.title || ''} ${job.company || ''}`.trim();
-        if (textToMatch && textToMatch.length > 10) { // Need meaningful text to match
-          const match = await matchResumeToJob(textToMatch, resumes);
+        // Filter out invalid resumes
+        const validResumes = resumes.filter(r => r && r.filename && r.text && r.text.trim().length >= 10);
+        
+        if (validResumes.length > 0) {
+          // Use description if available, otherwise use title + company as fallback
+          const textToMatch = job.description || `${job.title || ''} ${job.company || ''}`.trim();
+          
+          // Always try to match, even with short text (matchResumeToJob will handle it)
+          const match = await matchResumeToJob(textToMatch, validResumes);
+          
+          // Always set bestResume if we have a match, even if score is 0
           job.bestResume = match.filename || null;
-          job.matchScore = match.score || 0;
+          job.matchScore = match.score !== undefined && match.score !== null ? match.score : 0;
           job.topKeywords = match.topKeywords || [];
           
           // Debug logging
-          if (match.score === 0) {
-            console.log('Zero score match:', {
+          if (!match.filename) {
+            console.log('No resume match found:', {
               jobTitle: job.title,
               hasDescription: !!job.description,
               descriptionLength: job.description?.length || 0,
-              textToMatchLength: textToMatch.length,
-              resumeCount: resumes.length,
-              resumeTextLengths: resumes.map(r => r.text?.length || 0)
+              textToMatchLength: textToMatch?.length || 0,
+              validResumeCount: validResumes.length,
+              resumeTextLengths: validResumes.map(r => r.text?.length || 0)
+            });
+          } else if (match.score === 0) {
+            console.log('Zero score match (but resume assigned):', {
+              jobTitle: job.title,
+              bestResume: match.filename,
+              hasDescription: !!job.description,
+              descriptionLength: job.description?.length || 0,
+              textToMatchLength: textToMatch?.length || 0
             });
           }
         } else {
-          console.log('Skipping match - insufficient text:', {
+          console.log('No valid resumes available for matching:', {
             jobTitle: job.title,
-            hasDescription: !!job.description,
-            textToMatchLength: textToMatch?.length || 0
+            totalResumes: resumes.length,
+            resumeStatus: resumes.map(r => ({
+              filename: r?.filename || 'missing',
+              hasText: !!(r?.text && r.text.trim().length >= 10)
+            }))
           });
           job.bestResume = null;
           job.matchScore = 0;
@@ -479,18 +497,36 @@ async function matchResumeToJob(jobDescription, resumes) {
   
   if (!jobDescription || jobDescription.trim().length < 10) {
     console.log('Job description too short for matching');
+    // Still try to match with first available resume if description is short
+    if (resumes.length > 0 && resumes[0].text && resumes[0].text.trim().length >= 10) {
+      return {
+        filename: resumes[0].filename,
+        score: 0,
+        topKeywords: []
+      };
+    }
     return bestMatch;
   }
   
+  // Track if we found any valid resume
+  let hasValidResume = false;
+  
   for (const resume of resumes) {
+    if (!resume || !resume.filename) {
+      console.log('Skipping invalid resume entry');
+      continue;
+    }
+    
     if (!resume.text || resume.text.trim().length < 10) {
       console.log(`Skipping resume ${resume.filename} - text too short or missing`);
       continue;
     }
     
+    hasValidResume = true;
     const score = cosineSimilarity(jobDescription, resume.text);
     
-    if (score > bestMatch.score) {
+    // Always update if this is the first valid resume or if score is better (including equal)
+    if (!bestMatch.filename || score >= bestMatch.score) {
       const topKeywords = getTopMatchingKeywords(jobDescription, resume.text, 10);
       bestMatch = {
         filename: resume.filename,
@@ -500,9 +536,30 @@ async function matchResumeToJob(jobDescription, resumes) {
     }
   }
   
+  // If we have valid resumes but no match was found (all scores were 0 or negative),
+  // still return the first valid resume as a fallback
+  if (!bestMatch.filename && hasValidResume && resumes.length > 0) {
+    const firstValidResume = resumes.find(r => r && r.text && r.text.trim().length >= 10);
+    if (firstValidResume) {
+      console.log('No match found, using first valid resume as fallback:', firstValidResume.filename);
+      return {
+        filename: firstValidResume.filename,
+        score: 0,
+        topKeywords: []
+      };
+    }
+  }
+  
   // Log if no good match found
-  if (bestMatch.score === 0 && resumes.length > 0) {
-    console.log('No match found above 0:', {
+  if (bestMatch.score === 0 && resumes.length > 0 && bestMatch.filename) {
+    console.log('Match found but score is 0:', {
+      bestResume: bestMatch.filename,
+      resumesChecked: resumes.length,
+      jobDescLength: jobDescription.length,
+      resumeTextLengths: resumes.map(r => r.text?.length || 0)
+    });
+  } else if (!bestMatch.filename && resumes.length > 0) {
+    console.log('No valid resume found for matching:', {
       resumesChecked: resumes.length,
       jobDescLength: jobDescription.length,
       resumeTextLengths: resumes.map(r => r.text?.length || 0)
@@ -587,4 +644,64 @@ chrome.runtime.onStartup.addListener(() => {
 
 // Update badge when extension starts
 updateBadge();
+
+// Re-match existing jobs when resumes are added or updated
+chrome.storage.onChanged.addListener(async (changes, areaName) => {
+  if (areaName === 'local' && changes.resumes) {
+    const newResumes = changes.resumes.newValue || [];
+    const oldResumes = changes.resumes.oldValue || [];
+    
+    // Only re-match if resumes were actually added or changed (not just deleted)
+    if (newResumes.length > 0 && newResumes.some(r => r && r.text && r.text.trim().length >= 10)) {
+      console.log('Resumes updated, re-matching existing jobs...');
+      
+      try {
+        const storage = await chrome.storage.local.get(['jobs']);
+        const jobs = storage.jobs || [];
+        
+        if (jobs.length === 0) {
+          console.log('No existing jobs to re-match');
+          return;
+        }
+        
+        const validResumes = newResumes.filter(r => r && r.filename && r.text && r.text.trim().length >= 10);
+        
+        if (validResumes.length === 0) {
+          console.log('No valid resumes available for re-matching');
+          return;
+        }
+        
+        let updatedCount = 0;
+        const updatedJobs = [];
+        
+        for (const job of jobs) {
+          // Skip if job already has a bestResume (unless we want to re-evaluate)
+          // For now, only match jobs that don't have a bestResume
+          if (!job.bestResume || job.bestResume === 'N/A' || job.bestResume === null) {
+            const textToMatch = job.description || `${job.title || ''} ${job.company || ''}`.trim();
+            const match = await matchResumeToJob(textToMatch, validResumes);
+            
+            if (match.filename) {
+              job.bestResume = match.filename;
+              job.matchScore = match.score !== undefined && match.score !== null ? match.score : 0;
+              job.topKeywords = match.topKeywords || [];
+              updatedCount++;
+            }
+          }
+          updatedJobs.push(job);
+        }
+        
+        if (updatedCount > 0) {
+          await chrome.storage.local.set({ jobs: updatedJobs });
+          console.log(`Re-matched ${updatedCount} jobs with resumes`);
+          await updateBadge();
+        } else {
+          console.log('No jobs needed re-matching');
+        }
+      } catch (error) {
+        console.error('Error re-matching jobs:', error);
+      }
+    }
+  }
+});
 
