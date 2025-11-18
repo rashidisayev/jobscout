@@ -171,18 +171,53 @@ async function performScan() {
         
         // Navigate to page
         await chrome.tabs.update(scanTab.id, { url: pageUrl });
-        // Wait longer for page to load, especially for first page
-        const waitTime = pageIndex === 0 ? randomDelay(4000, 6000) : randomDelay(3000, 5000);
+        
+        // Wait for tab to finish loading
+        await new Promise((resolve) => {
+          const checkTab = async () => {
+            try {
+              const tab = await chrome.tabs.get(scanTab.id);
+              if (tab.status === 'complete' && tab.url && tab.url.includes('linkedin.com/jobs')) {
+                resolve();
+              } else {
+                setTimeout(checkTab, 500);
+              }
+            } catch (error) {
+              // Tab might have been closed, wait a bit and resolve
+              setTimeout(resolve, 2000);
+            }
+          };
+          checkTab();
+        });
+        
+        // Wait longer for page to fully load, especially for first page
+        const waitTime = pageIndex === 0 ? randomDelay(5000, 7000) : randomDelay(4000, 6000);
         await sleep(waitTime);
         
-        // Inject content script and start scraping
+        // Retry mechanism for sending message (content script should auto-inject from manifest)
         try {
-          const results = await chrome.tabs.sendMessage(scanTab.id, {
-            action: 'scrapeJobs',
-            onlyNew: settings.onlyNewRoles,
-            lastSeenIds: lastSeenIds,
-            pageIndex: pageIndex
-          });
+          let results = null;
+          let retries = 5;
+          while (retries > 0 && !results) {
+            try {
+              results = await chrome.tabs.sendMessage(scanTab.id, {
+                action: 'scrapeJobs',
+                onlyNew: settings.onlyNewRoles,
+                lastSeenIds: lastSeenIds,
+                pageIndex: pageIndex
+              });
+            } catch (msgError) {
+              retries--;
+              if (retries > 0) {
+                console.log(`Message send failed (page ${pageIndex + 1}), retrying... (${retries} retries left)`);
+                // Wait longer between retries
+                await sleep(3000);
+              } else {
+                console.error(`Failed to send message after all retries for page ${pageIndex + 1}:`, msgError);
+                throw msgError;
+              }
+            }
+          }
           
           if (results && results.jobs) {
             const pageJobs = results.jobs;

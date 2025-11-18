@@ -373,6 +373,22 @@ footer {
   text-decoration: underline;
 }
 
+.coffee-link {
+  display: inline-block;
+  margin-top: 8px;
+  padding: 6px 12px;
+  background: #ff6b35;
+  color: white !important;
+  border-radius: 4px;
+  font-weight: 500;
+  transition: background 0.2s;
+}
+
+.coffee-link:hover {
+  background: #e55a2b;
+  text-decoration: none !important;
+}
+
 .live-scan-status {
   background: #e7f3ff;
   border: 2px solid #0077b5;
