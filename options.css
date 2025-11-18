@@ -319,39 +319,82 @@ table tr:hover {
   font-size: 12px;
   cursor: help;
   position: relative;
+  transition: all 0.2s ease;
 }
 
 /* Score range colors - gradient from red (poor) to green (excellent) */
-.score-very-poor {
-  background: #dc3545; /* Red - Very poor match (0.0 - 0.1) */
-  color: white;
+.score-badge.score-very-poor {
+  background: #dc3545 !important; /* Red - Very poor match (0.0 - 0.1) */
+  color: white !important;
 }
 
-.score-weak {
-  background: #fd7e14; /* Orange - Weak match (0.1 - 0.3) */
-  color: white;
+.score-badge.score-weak {
+  background: #fd7e14 !important; /* Orange - Weak match (0.1 - 0.3) */
+  color: white !important;
 }
 
-.score-moderate {
-  background: #ffc107; /* Yellow - Moderate match (0.3 - 0.5) */
-  color: #333;
+.score-badge.score-moderate {
+  background: #ffc107 !important; /* Yellow - Moderate match (0.3 - 0.5) */
+  color: #333 !important;
 }
 
-.score-good {
-  background: #20c997; /* Teal - Good match (0.5 - 0.7) */
-  color: white;
+.score-badge.score-good {
+  background: #20c997 !important; /* Teal - Good match (0.5 - 0.7) */
+  color: white !important;
 }
 
-.score-excellent {
-  background: #28a745; /* Green - Excellent match (0.7 - 1.0) */
-  color: white;
+.score-badge.score-excellent {
+  background: #28a745 !important; /* Green - Excellent match (0.7 - 1.0) */
+  color: white !important;
 }
 
 /* Enhanced tooltip on hover */
 .score-badge:hover {
   opacity: 0.9;
   transform: scale(1.05);
-  transition: all 0.2s ease;
+}
+
+/* Custom tooltip using ::after pseudo-element */
+.score-badge::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 12px;
+  background: #333;
+  color: white;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: normal;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease 0.3s;
+  z-index: 10000;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  max-width: 300px;
+  white-space: normal;
+  text-align: center;
+  line-height: 1.4;
+}
+
+.score-badge::before {
+  content: '';
+  position: absolute;
+  bottom: calc(100% + 2px);
+  left: 50%;
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-top-color: #333;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease 0.3s;
+  z-index: 10001;
+}
+
+.score-badge:hover::after,
+.score-badge:hover::before {
+  opacity: 1;
 }
 
 .job-link {

@@ -309,13 +309,19 @@ function displayResults(jobs) {
           <td>${escapeHtml(job.datePosted && job.datePosted !== 'Unknown' ? job.datePosted : 'N/A')}</td>
           <td>${escapeHtml(job.bestResume || 'N/A')}</td>
           <td>
-            ${job.matchScore !== undefined && job.matchScore !== null ? `
-              <span class="score-badge ${getScoreClass(job.matchScore)}" 
-                    data-score="${job.matchScore}" 
-                    title="${getScoreTooltip(job.matchScore)}">
-                ${(job.matchScore * 100).toFixed(1)}%
-              </span>
-            ` : 'N/A'}
+            ${job.matchScore !== undefined && job.matchScore !== null ? (() => {
+              const score = job.matchScore;
+              const scoreClass = getScoreClass(score);
+              const tooltip = getScoreTooltip(score);
+              return `
+                <span class="score-badge ${scoreClass}" 
+                      data-score="${score}" 
+                      data-tooltip="${escapeHtml(tooltip)}"
+                      title="${escapeHtml(tooltip)}">
+                  ${(score * 100).toFixed(1)}%
+                </span>
+              `;
+            })() : 'N/A'}
           </td>
           <td>
             ${job.link ? `<a href="${job.link}" target="_blank" class="job-link">View</a>` : 'N/A'}
