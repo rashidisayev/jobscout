@@ -42,7 +42,8 @@
       "resources": [
         "vendor/pdfjs/pdf.mjs",
         "vendor/pdfjs/pdf.worker.mjs",
-        "vendor/pdfjs/*.map"
+        "vendor/pdfjs/*.map",
+        "scripts/utils.js"
       ],
       "matches": ["https://www.linkedin.com/*"]
     }

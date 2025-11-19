@@ -88,11 +88,19 @@ const SELECTORS = {
     '.jobs-details-top-card__primary-description li'
   ],
   jobDetailDescription: [
+    'article.jobs-description__container',
+    'div.description',
+    '[data-test-description]',
     '.jobs-description__text',
     '.jobs-description-content__text',
     '.jobs-box__html-content',
     '[data-test-id="job-details-description"]',
-    '.jobs-description__text-container'
+    '.jobs-description__text-container',
+    // About the job section
+    'section[data-test-id="job-details-section"]',
+    'div[data-test-id="job-details-section"]',
+    'section.jobs-description__section',
+    'div.jobs-description__section'
   ],
   jobDetailDate: [
     '.jobs-details-top-card__job-insight',
@@ -112,6 +120,18 @@ const SELECTORS = {
   seeMoreJobs: 'button[aria-label*="See more jobs"]',
   loadMore: 'button[data-tracking-control-name*="see_more"]'
 };
+
+let utilsModulePromise = null;
+function loadUtilsModule() {
+  if (!utilsModulePromise) {
+    utilsModulePromise = import(chrome.runtime.getURL('scripts/utils.js'))
+      .catch(error => {
+        console.error('Failed to load utils module:', error);
+        return { sanitizeHtml: (html = '') => html };
+      });
+  }
+  return utilsModulePromise;
+}
 
 // Helper to find element with multiple selectors (optionally within a parent)
 function findElement(selectors, parent = document) {
@@ -195,6 +215,7 @@ async function scrapeJobs(onlyNew = true, lastSeenIds = [], pageIndex = 0) {
           const title = findElement(SELECTORS.jobTitle, card)?.textContent?.trim() || 'Unknown';
           jobLinks.push({
             link: constructedLink,
+            url: constructedLink,
             id: hashUrl(constructedLink),
             title,
             company: findElement(SELECTORS.jobCompany, card)?.textContent?.trim() || 'Unknown',
@@ -538,6 +559,7 @@ async function scrapeJobs(onlyNew = true, lastSeenIds = [], pageIndex = 0) {
       // Create job data object with final extracted values
       const jobData = {
         link: jobLink,
+        url: jobLink,
         id: jobId,
         title,
         company: company || 'Unknown',
@@ -560,16 +582,21 @@ async function scrapeJobs(onlyNew = true, lastSeenIds = [], pageIndex = 0) {
       const result = await getJobDescription(jobInfo.link);
       
       // Use extracted data from detail page, prioritizing detail page data
+      let finalTitle = jobInfo.title;
       let finalCompany = jobInfo.company;
       let finalLocation = jobInfo.location;
       let finalDate = jobInfo.datePosted;
       
       if (result.extractors) {
         // Always prefer detail page data if available
+        const detailTitle = result.extractors.getTitle();
         const detailCompany = result.extractors.getCompany();
         const detailLocation = result.extractors.getLocation();
         const detailDate = result.extractors.getDate();
         
+        if (detailTitle) {
+          finalTitle = detailTitle;
+        }
         if (detailCompany) {
           finalCompany = detailCompany;
         }
@@ -581,9 +608,14 @@ async function scrapeJobs(onlyNew = true, lastSeenIds = [], pageIndex = 0) {
         }
       }
       
+      const descriptionHtml = result.descriptionHtml || '';
       const finalJobInfo = {
         ...jobInfo,
-        description: result.description || '',
+        url: jobInfo.url || jobInfo.link,
+        title: finalTitle || jobInfo.title || 'Unknown',
+        descriptionHtml,
+        needsFetch: !descriptionHtml,
+        scrapedAt: Date.now(),
         company: finalCompany || 'Unknown',
         location: finalLocation || 'Unknown',
         datePosted: finalDate || 'Unknown'
@@ -595,8 +627,8 @@ async function scrapeJobs(onlyNew = true, lastSeenIds = [], pageIndex = 0) {
         company: finalJobInfo.company,
         location: finalJobInfo.location,
         datePosted: finalJobInfo.datePosted,
-        hasDescription: !!finalJobInfo.description,
-        descriptionLength: finalJobInfo.description?.length || 0
+        hasDescription: !!finalJobInfo.descriptionHtml,
+        descriptionLength: finalJobInfo.descriptionHtml?.length || 0
       });
       
       jobs.push(finalJobInfo);
@@ -606,7 +638,13 @@ async function scrapeJobs(onlyNew = true, lastSeenIds = [], pageIndex = 0) {
     } catch (error) {
       console.error(`Error fetching description for ${jobInfo.link}:`, error);
       // Still add job with whatever data we have
-      jobs.push(jobInfo);
+      jobs.push({
+        ...jobInfo,
+        url: jobInfo.url || jobInfo.link,
+        descriptionHtml: '',
+        needsFetch: true,
+        scrapedAt: Date.now()
+      });
     }
   }
   
@@ -615,38 +653,86 @@ async function scrapeJobs(onlyNew = true, lastSeenIds = [], pageIndex = 0) {
 
 // Get full job description and extract missing metadata from detail page
 async function getJobDescription(jobUrl) {
-  // Use fetch to get the page content (same origin)
-  // Note: LinkedIn may serve content via JavaScript, so this might not get everything
   try {
+    // First try: Use background script to extract from a loaded tab (handles dynamic content)
+    console.log(`Requesting job description extraction from background for ${jobUrl}...`);
+    try {
+      const result = await chrome.runtime.sendMessage({
+        action: 'extractJobDescription',
+        jobUrl: jobUrl
+      });
+      
+      if (result && result.descriptionHtml) {
+        const { sanitizeHtml } = await loadUtilsModule();
+        const descriptionHtml = sanitizeHtml(result.descriptionHtml);
+        console.log(`Successfully extracted description via background script (${descriptionHtml.length} chars)`);
+        return {
+          descriptionHtml,
+          extractors: result.extractors || null
+        };
+      }
+    } catch (error) {
+      console.warn('Background extraction failed, trying fetch method:', error);
+    }
+    
+    // Fallback: Try fetching (may not work if content is dynamically loaded)
+    console.log(`Fetching job description from ${jobUrl}...`);
     const response = await fetch(jobUrl, {
       headers: {
         'Accept': 'text/html',
         'X-Requested-With': 'XMLHttpRequest'
-      }
+      },
+      credentials: 'include'
     });
     
     if (!response.ok) {
       console.warn(`Failed to fetch ${jobUrl}: ${response.status}`);
-      return { description: '', extractors: null };
+      return { descriptionHtml: '', extractors: null };
     }
     
     const html = await response.text();
     const parser = new DOMParser();
     const doc = parser.parseFromString(html, 'text/html');
     
-    // Extract description
-    let description = '';
-    const descSelectors = Array.isArray(SELECTORS.jobDetailDescription) 
-      ? SELECTORS.jobDetailDescription 
-      : [SELECTORS.jobDetailDescription];
+    const { sanitizeHtml } = await loadUtilsModule();
+    const rawHtml = extractDescriptionContent(doc);
+    const descriptionHtml = rawHtml ? sanitizeHtml(rawHtml) : '';
     
-    for (const selector of descSelectors) {
-      const element = doc.querySelector(selector);
-      if (element) {
-        description = element.textContent.trim();
-        if (description.length > 50) break; // Need meaningful description
+    if (!descriptionHtml) {
+      console.warn(`No description found for ${jobUrl}`);
+      console.warn(`Page HTML length: ${html.length} chars`);
+      console.warn(`Body text length: ${doc.body?.textContent?.length || 0} chars`);
+      // Try to find any text that might be the description
+      const allText = doc.body?.textContent || '';
+      if (allText.length > 500) {
+        console.warn(`Found ${allText.length} chars of text, but extraction failed`);
+        // Log first 500 chars to see what we got
+        console.warn(`First 500 chars: ${allText.substring(0, 500)}`);
       }
+    } else {
+      console.log(`Successfully extracted description (${descriptionHtml.length} chars) for ${jobUrl}`);
     }
+    
+    // Extract title with multiple fallbacks
+    const getTitle = () => {
+      const titleSelectors = Array.isArray(SELECTORS.jobDetailTitle)
+        ? SELECTORS.jobDetailTitle
+        : [SELECTORS.jobDetailTitle];
+      for (const selector of titleSelectors) {
+        const element = doc.querySelector(selector);
+        if (element) {
+          const text = element.textContent?.trim();
+          if (text && text.length > 0) return text;
+        }
+      }
+      // Fallback: look for h1 tags
+      const h1 = doc.querySelector('h1');
+      if (h1) {
+        const text = h1.textContent?.trim();
+        if (text && text.length > 0) return text;
+      }
+      return null;
+    };
     
     // Extract company with multiple fallbacks
     const getCompany = () => {
@@ -810,8 +896,9 @@ async function getJobDescription(jobUrl) {
     };
     
     return {
-      description: description,
+      descriptionHtml,
       extractors: {
+        getTitle: getTitle,
         getCompany: getCompany,
         getLocation: getLocation,
         getDate: getDate
@@ -819,8 +906,395 @@ async function getJobDescription(jobUrl) {
     };
   } catch (error) {
     console.error('Error fetching job description:', error);
-    return { description: '', extractors: null };
+    return { descriptionHtml: '', extractors: null };
   }
+}
+
+function extractDescriptionContent(doc) {
+  console.log('Extracting description content...');
+  
+  // LinkedIn navigation/header keywords to exclude
+  const NAV_KEYWORDS = [
+    'skip to search', 'skip to main content', 'keyboard shortcuts', 'close jump menu',
+    'new feed updates', 'notifications', 'home', 'my network', 'jobs', 'messaging',
+    'for business', 'advertise', 'me', 'search', 'sign in', 'join now', 'sign up',
+    'linkedin', 'navigation', 'menu', 'header', 'footer', 'sidebar'
+  ];
+  
+  function isNavigationElement(element) {
+    if (!element) return false;
+    
+    const classes = (element.className || '').toLowerCase();
+    if (classes.includes('nav') || classes.includes('header') || 
+        classes.includes('footer') || classes.includes('sidebar') ||
+        classes.includes('global-nav') || classes.includes('top-bar') ||
+        classes.includes('skip-link') || classes.includes('accessibility')) {
+      return true;
+    }
+    
+    const id = (element.id || '').toLowerCase();
+    if (id.includes('nav') || id.includes('header') || id.includes('footer') ||
+        id.includes('skip') || id.includes('accessibility')) {
+      return true;
+    }
+    
+    const text = (element.textContent || '').toLowerCase().trim();
+    if (text.length < 100) {
+      for (const keyword of NAV_KEYWORDS) {
+        if (text.includes(keyword)) {
+          return true;
+        }
+      }
+    }
+    
+    let parent = element.parentElement;
+    for (let i = 0; i < 5 && parent; i++) {
+      const parentClasses = (parent.className || '').toLowerCase();
+      const parentId = (parent.id || '').toLowerCase();
+      if (parentClasses.includes('nav') || parentClasses.includes('header') ||
+          parentClasses.includes('global-nav') || parentId.includes('nav') ||
+          parentId.includes('header')) {
+        return true;
+      }
+      parent = parent.parentElement;
+    }
+    
+    return false;
+  }
+  
+  // Strategy 1: Look for embedded JSON data in script tags (LinkedIn often embeds data)
+  const scripts = doc.querySelectorAll('script[type="application/ld+json"], script:not([src])');
+  console.log(`Strategy 1: Found ${scripts.length} script tags to check`);
+  for (const script of scripts) {
+    try {
+      const text = script.textContent || '';
+      if (text.includes('description') || text.includes('jobDescription') || text.includes('about')) {
+        const jsonMatch = text.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const data = JSON.parse(jsonMatch[0]);
+          // Look for description in various possible locations
+          const desc = data.description || data.jobDescription || data.about || 
+                       data['@graph']?.find(item => item.description)?.description ||
+                       data.mainEntity?.description;
+          if (desc && typeof desc === 'string' && desc.length > 100) {
+            console.log('Strategy 1 SUCCESS: Found description in JSON data');
+            return `<p>${desc.replace(/\n/g, '</p><p>')}</p>`;
+          }
+        }
+      }
+    } catch (e) {
+      // Not valid JSON, continue
+    }
+  }
+  
+  // Strategy 2: Look for data attributes that might contain description
+  const dataElements = doc.querySelectorAll('[data-description], [data-job-description], [data-content]');
+  console.log(`Strategy 2: Found ${dataElements.length} elements with data attributes`);
+  for (const el of dataElements) {
+    const desc = el.getAttribute('data-description') || 
+                 el.getAttribute('data-job-description') || 
+                 el.getAttribute('data-content');
+    if (desc && desc.length > 100) {
+      console.log('Strategy 2 SUCCESS: Found description in data attribute');
+      return desc;
+    }
+  }
+  
+  // Strategy 3: Search for "About the job" or similar headings and get ALL following content
+  const allHeadings = doc.querySelectorAll('h1, h2, h3, h4, h5, h6, [class*="heading"], [class*="title"], [class*="header"], span, div, p');
+  console.log(`Strategy 3: Found ${allHeadings.length} potential headings to check`);
+  let aboutHeadingFound = false;
+  
+  for (const heading of allHeadings) {
+    // Skip navigation elements
+    if (isNavigationElement(heading)) continue;
+    
+    const headingText = heading.textContent?.trim() || '';
+    const headingLower = headingText.toLowerCase();
+    
+    // Skip if it contains navigation keywords
+    if (NAV_KEYWORDS.some(kw => headingLower.includes(kw))) continue;
+    
+    // More flexible matching - look for "about" and "job" anywhere in the text
+    const isAboutHeading = headingText.toLowerCase().includes('about') && 
+                          (headingText.toLowerCase().includes('job') || 
+                           headingText.toLowerCase().includes('position') ||
+                           headingText.toLowerCase().includes('role') ||
+                           headingText.length < 20); // Short headings like "About"
+    
+    if (isAboutHeading || 
+        headingText.match(/^about$/i) ||
+        headingText.match(/job\s+description/i) ||
+        headingText.match(/^description$/i) ||
+        headingText.match(/overview/i)) {
+      aboutHeadingFound = true;
+      console.log(`Strategy 3: Found matching heading: "${headingText}"`);
+      
+      // Strategy 3a: Find the closest parent section/div that contains substantial content
+      let current = heading;
+      let bestContainer = null;
+      let bestTextLength = 0;
+      
+      // Walk up the DOM tree to find the best container
+      for (let depth = 0; depth < 10 && current && current !== doc.body; depth++) {
+        // Skip if parent is navigation
+        if (isNavigationElement(current)) {
+          current = current.parentElement;
+          continue;
+        }
+        
+        const text = current.textContent?.trim() || '';
+        const textLower = text.toLowerCase();
+        
+        // Skip if text contains too many navigation keywords
+        const navKeywordCount = NAV_KEYWORDS.filter(kw => textLower.includes(kw)).length;
+        if (navKeywordCount > 3) {
+          current = current.parentElement;
+          continue;
+        }
+        
+        // Look for containers with substantial content (likely the description section)
+        if (text.length > bestTextLength && text.length > 200) {
+          // Check if this looks like a description container
+          const hasJobKeywords = text.toLowerCase().includes('responsibilities') ||
+                                text.toLowerCase().includes('requirements') ||
+                                text.toLowerCase().includes('qualifications') ||
+                                text.toLowerCase().includes('experience') ||
+                                text.toLowerCase().includes('skills') ||
+                                text.length > 500; // Or just very long text
+          
+          if (hasJobKeywords || text.length > 1000) {
+            const tagName = current.tagName?.toUpperCase() || '';
+            if (tagName === 'SECTION' || tagName === 'DIV' || tagName === 'ARTICLE' || 
+                tagName === 'MAIN' || current.classList.length > 0) {
+              bestContainer = current;
+              bestTextLength = text.length;
+            }
+          }
+        }
+        current = current.parentElement;
+      }
+      
+      if (bestContainer && !isNavigationElement(bestContainer)) {
+        const clone = bestContainer.cloneNode(true);
+        // Remove navigation elements from clone
+        clone.querySelectorAll('nav, header, [class*="nav"], [class*="header"], [id*="nav"], [id*="header"]').forEach(node => node.remove());
+        removeDangerousNodes(clone);
+        const inner = clone.innerHTML?.trim() || '';
+        
+        // Check if result contains too many navigation keywords
+        const innerLower = inner.toLowerCase();
+        const navCount = NAV_KEYWORDS.filter(kw => innerLower.includes(kw)).length;
+        if (inner.length > 100 && navCount < 3) {
+          console.log(`Strategy 3a SUCCESS: Found description in parent container (${bestTextLength} chars)`);
+          return inner;
+        }
+      }
+      
+      // Strategy 3b: Get ALL following siblings until we hit another major heading
+      let sibling = heading.nextElementSibling;
+      const parts = [];
+      let collectedText = '';
+      
+      while (sibling && parts.length < 50) {
+        // Skip navigation elements
+        if (isNavigationElement(sibling)) {
+          sibling = sibling.nextElementSibling;
+          continue;
+        }
+        
+        const tag = sibling.tagName?.toUpperCase() || '';
+        // Stop at major headings (but allow h4, h5, h6 which might be subsections)
+        if (tag === 'H1' || tag === 'H2' || tag === 'H3') {
+          // Check if this is a new major section
+          const siblingText = sibling.textContent?.trim() || '';
+          const siblingLower = siblingText.toLowerCase();
+          // Skip if it's a navigation heading
+          if (NAV_KEYWORDS.some(kw => siblingLower.includes(kw))) {
+            break;
+          }
+          if (siblingText.length < 50 && 
+              (siblingText.toLowerCase().includes('requirements') ||
+               siblingText.toLowerCase().includes('benefits') ||
+               siblingText.toLowerCase().includes('qualifications'))) {
+            // This might be a subsection, continue
+          } else {
+            break; // New major section, stop here
+          }
+        }
+        
+        const text = sibling.textContent?.trim() || '';
+        // Skip if text contains navigation keywords
+        const textLower = text.toLowerCase();
+        if (NAV_KEYWORDS.some(kw => textLower.includes(kw)) && text.length < 200) {
+          sibling = sibling.nextElementSibling;
+          continue;
+        }
+        
+        if (text.length > 10) {
+          const clone = sibling.cloneNode(true);
+          removeDangerousNodes(clone);
+          parts.push(clone.outerHTML);
+          collectedText += text + ' ';
+        }
+        sibling = sibling.nextElementSibling;
+      }
+      
+      if (parts.length > 0 && collectedText.trim().length > 100) {
+        // Final check: make sure collected text doesn't have too many nav keywords
+        const collectedLower = collectedText.toLowerCase();
+        const navCount = NAV_KEYWORDS.filter(kw => collectedLower.includes(kw)).length;
+        if (navCount < 5) {
+          console.log(`Strategy 3b SUCCESS: Found description in ${parts.length} sibling elements (${collectedText.trim().length} chars)`);
+          return parts.join('');
+        }
+      }
+      
+      // Strategy 3c: Find the next section/div after the heading
+      let nextSection = heading.nextElementSibling;
+      while (nextSection && nextSection !== doc.body) {
+        if (isNavigationElement(nextSection)) {
+          nextSection = nextSection.nextElementSibling;
+          continue;
+        }
+        
+        const tagName = nextSection.tagName?.toUpperCase() || '';
+        if (tagName === 'SECTION' || tagName === 'DIV' || tagName === 'ARTICLE') {
+          const text = nextSection.textContent?.trim() || '';
+          const textLower = text.toLowerCase();
+          const navCount = NAV_KEYWORDS.filter(kw => textLower.includes(kw)).length;
+          if (text.length > 200 && navCount < 3) {
+            const clone = nextSection.cloneNode(true);
+            removeDangerousNodes(clone);
+            const inner = clone.innerHTML?.trim() || '';
+            if (inner.length > 100) {
+              console.log(`Strategy 3c SUCCESS: Found description in next section (${text.length} chars)`);
+              return inner;
+            }
+          }
+        }
+        nextSection = nextSection.nextElementSibling;
+        if (!nextSection) break;
+        // Don't go too far - stop if we hit another heading
+        if (nextSection.tagName?.match(/^H[1-3]$/)) break;
+      }
+    }
+  }
+  
+  if (aboutHeadingFound) {
+    console.log('Strategy 3: Found "About" heading but could not extract content from siblings/parents');
+  }
+  
+  // Strategy 4: Try standard CSS selectors
+  const selectors = Array.isArray(SELECTORS.jobDetailDescription)
+    ? SELECTORS.jobDetailDescription
+    : [SELECTORS.jobDetailDescription];
+  console.log(`Strategy 4: Trying ${selectors.length} CSS selectors`);
+  for (const selector of selectors) {
+    try {
+      const element = doc.querySelector(selector);
+      if (!element) continue;
+      
+      const clone = element.cloneNode(true);
+      removeDangerousNodes(clone);
+      let inner = clone.innerHTML?.trim() || '';
+      if (!inner) {
+        const text = clone.textContent?.trim();
+        if (text && text.length > 50) {
+          inner = `<p>${text}</p>`;
+        }
+      }
+      if (inner.length > 100) {
+        console.log(`Strategy 4 SUCCESS: Found description using selector "${selector}"`);
+        return inner;
+      }
+    } catch (e) {
+      // Invalid selector, continue
+    }
+  }
+  
+  // Strategy 5: Find the largest text block that looks like a description
+  // Look for divs/sections with substantial text content
+  const candidates = doc.querySelectorAll('div, section, article, main');
+  let bestCandidate = null;
+  let bestScore = 0;
+  
+  for (const candidate of candidates) {
+    // Skip navigation elements
+    if (isNavigationElement(candidate)) continue;
+    
+    const text = candidate.textContent?.trim() || '';
+    const textLower = text.toLowerCase();
+    
+    // Skip if contains too many navigation keywords
+    const navKeywordCount = NAV_KEYWORDS.filter(kw => textLower.includes(kw)).length;
+    if (navKeywordCount > 3) continue;
+    
+    // Score based on length and whether it contains job-related keywords
+    if (text.length > 200) {
+      const keywords = ['responsibilities', 'requirements', 'qualifications', 'experience', 
+                        'skills', 'benefits', 'salary', 'location', 'remote', 'full-time'];
+      const keywordCount = keywords.filter(kw => textLower.includes(kw)).length;
+      const score = text.length + (keywordCount * 100);
+      
+      if (score > bestScore && text.length > 300) {
+        bestCandidate = candidate;
+        bestScore = score;
+      }
+    }
+  }
+  
+  if (bestCandidate && !isNavigationElement(bestCandidate)) {
+    const clone = bestCandidate.cloneNode(true);
+    // Remove navigation elements from clone
+    clone.querySelectorAll('nav, header, [class*="nav"], [class*="header"], [id*="nav"], [id*="header"]').forEach(node => node.remove());
+    removeDangerousNodes(clone);
+    const inner = clone.innerHTML?.trim() || '';
+    
+    // Final check for navigation keywords
+    const innerLower = inner.toLowerCase();
+    const navCount = NAV_KEYWORDS.filter(kw => innerLower.includes(kw)).length;
+    if (inner.length > 100 && navCount < 3) {
+      console.log(`Strategy 5 SUCCESS: Found description in best candidate (score: ${bestScore})`);
+      return inner;
+    }
+  }
+  
+  // Strategy 6: Look for any element with class containing "description", "content", "body", "text"
+  const descClasses = doc.querySelectorAll('[class*="description"], [class*="content"], [class*="body"], [class*="text"], [class*="detail"]');
+  console.log(`Strategy 6: Found ${descClasses.length} elements with description-related classes`);
+  for (const el of descClasses) {
+    // Skip navigation elements
+    if (isNavigationElement(el)) continue;
+    
+    const text = el.textContent?.trim() || '';
+    const textLower = text.toLowerCase();
+    
+    // Skip if contains navigation keywords
+    if (NAV_KEYWORDS.some(kw => textLower.includes(kw)) && text.length < 200) continue;
+    
+    if (text.length > 300) {
+      const clone = el.cloneNode(true);
+      removeDangerousNodes(clone);
+      const inner = clone.innerHTML?.trim() || '';
+      
+      // Check for navigation keywords
+      const innerLower = inner.toLowerCase();
+      const navCount = NAV_KEYWORDS.filter(kw => innerLower.includes(kw)).length;
+      if (inner.length > 100 && navCount < 3) {
+        console.log('Strategy 6 SUCCESS: Found description in class-based search');
+        return inner;
+      }
+    }
+  }
+  
+  console.log('All strategies failed - no description found');
+  return '';
+}
+
+function removeDangerousNodes(root) {
+  if (!root || !root.querySelectorAll) return;
+  root.querySelectorAll('script, style, iframe, object, embed').forEach(node => node.remove());
 }
 
 // Scroll page to load more jobs (infinite scroll)

@@ -605,3 +605,69 @@ footer {
   margin: 8px 0;
 }
 
+.hidden {
+  display: none !important;
+}
+
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+.modal.hidden {
+  display: none;
+}
+
+.modal-content {
+  max-width: 900px;
+  max-height: 80vh;
+  overflow: auto;
+  background: #fff;
+  border-radius: 10px;
+  padding: 16px 20px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+  width: 100%;
+}
+
+#modal-close {
+  border: none;
+  background: transparent;
+  font-size: 22px;
+  float: right;
+  cursor: pointer;
+}
+
+.job-description p {
+  margin: 0 0 8px;
+}
+
+.job-description ul {
+  margin: 8px 0 8px 20px;
+}
+
+.job-description ol {
+  margin: 8px 0 8px 20px;
+}
+
+.job-description li {
+  margin-bottom: 4px;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.job-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+

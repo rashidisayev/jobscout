@@ -96,6 +96,19 @@
       </section>
     </div>
     
+    <div id="job-modal" class="modal hidden">
+      <div class="modal-content">
+        <button id="modal-close">×</button>
+        <h3 id="modal-title"></h3>
+        <div id="modal-meta"></div>
+        <div class="modal-actions">
+          <button id="modal-view" class="btn btn-primary">Apply</button>
+          <button id="modal-fetch" class="btn btn-secondary hidden">Fetch description</button>
+        </div>
+        <div id="modal-body" class="job-description"></div>
+      </div>
+    </div>
+    
     <!-- Live Scanning Status -->
     <div id="liveScanStatus" class="live-scan-status" style="display: none;">
       <h3>Scanning Status</h3>
@@ -133,7 +146,7 @@
     </footer>
   </div>
   
-  <script src="options.js"></script>
+  <script type="module" src="options.js"></script>
 </body>
 </html>
 

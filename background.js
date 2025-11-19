@@ -52,7 +52,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     });
     return true;
   } else if (request.action === 'jobResults') {
-    handleJobResults(request.jobs).then(() => {
+    handleJobResults(request.jobs, { forceRescan: request.forceRescan }).then(() => {
       sendResponse({ success: true });
     });
     return true;
@@ -73,6 +73,15 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         scanCurrentUrl: state.scanCurrentUrl || '',
         scanCurrentPage: state.scanCurrentPage || 0
       });
+    });
+    return true;
+  } else if (request.action === 'extractJobDescription') {
+    // Extract job description from a loaded tab
+    extractJobDescriptionFromTab(request.jobUrl).then(result => {
+      sendResponse(result);
+    }).catch(error => {
+      console.error('Error extracting job description:', error);
+      sendResponse({ descriptionHtml: '', extractors: null, error: error.message });
     });
     return true;
   }
@@ -297,95 +306,134 @@ function addStartParameter(url, start) {
   }
 }
 
-// Handle job results: deduplicate, match with resumes, store
+// Handle job results: deduplicate, merge, match with resumes, store
 // Returns count of new jobs added
-async function handleJobResults(jobs) {
+async function handleJobResults(jobs = [], options = {}) {
+  if (!Array.isArray(jobs) || jobs.length === 0) {
+    return 0;
+  }
+  
+  const { forceRescan = false } = options;
   const existing = await chrome.storage.local.get(['jobs', 'lastSeenJobIds', 'resumes']);
   const existingJobs = existing.jobs || [];
-  const lastSeenIds = existing.lastSeenJobIds || [];
+  const lastSeenSet = new Set(existing.lastSeenJobIds || []);
   const resumes = existing.resumes || [];
+  const validResumes = resumes.filter(r => r && r.filename && r.text && r.text.trim().length >= 10);
   
-  const newJobIds = new Set(lastSeenIds);
-  const deduplicatedJobs = [];
-  
-  for (const job of jobs) {
-    const jobId = job.id || hashJobUrl(job.link);
-    if (!newJobIds.has(jobId)) {
-      newJobIds.add(jobId);
-      
-      // Match with resumes if available
-      if (resumes.length > 0) {
-        // Filter out invalid resumes
-        const validResumes = resumes.filter(r => r && r.filename && r.text && r.text.trim().length >= 10);
-        
-        if (validResumes.length > 0) {
-          // Use description if available, otherwise use title + company as fallback
-          const textToMatch = job.description || `${job.title || ''} ${job.company || ''}`.trim();
-          
-          // Always try to match, even with short text (matchResumeToJob will handle it)
-          const match = await matchResumeToJob(textToMatch, validResumes);
-          
-          // Always set bestResume if we have a match, even if score is 0
-          job.bestResume = match.filename || null;
-          job.matchScore = match.score !== undefined && match.score !== null ? match.score : 0;
-          job.topKeywords = match.topKeywords || [];
-          
-          // Debug logging
-          if (!match.filename) {
-            console.log('No resume match found:', {
-              jobTitle: job.title,
-              hasDescription: !!job.description,
-              descriptionLength: job.description?.length || 0,
-              textToMatchLength: textToMatch?.length || 0,
-              validResumeCount: validResumes.length,
-              resumeTextLengths: validResumes.map(r => r.text?.length || 0)
-            });
-          } else if (match.score === 0) {
-            console.log('Zero score match (but resume assigned):', {
-              jobTitle: job.title,
-              bestResume: match.filename,
-              hasDescription: !!job.description,
-              descriptionLength: job.description?.length || 0,
-              textToMatchLength: textToMatch?.length || 0
-            });
-          }
-        } else {
-          console.log('No valid resumes available for matching:', {
-            jobTitle: job.title,
-            totalResumes: resumes.length,
-            resumeStatus: resumes.map(r => ({
-              filename: r?.filename || 'missing',
-              hasText: !!(r?.text && r.text.trim().length >= 10)
-            }))
-          });
-          job.bestResume = null;
-          job.matchScore = 0;
-          job.topKeywords = [];
-        }
-      } else {
-        job.bestResume = null;
-        job.matchScore = 0;
-        job.topKeywords = [];
-      }
-      
+  const idToIndex = new Map();
+  existingJobs.forEach((job, index) => {
+    const jobUrl = job?.url || job?.link;
+    const jobId = job?.id || (jobUrl ? hashJobUrl(jobUrl) : null);
+    if (jobId) {
+      idToIndex.set(jobId, index);
       job.id = jobId;
-      job.foundAt = Date.now();
-      deduplicatedJobs.push(job);
+    }
+  });
+  
+  const mergedJobs = existingJobs.slice();
+  let newJobsCount = 0;
+  
+  for (const incoming of jobs) {
+    if (!incoming) continue;
+    
+    const jobUrl = incoming.url || incoming.link;
+    if (!jobUrl) continue;
+    
+    const jobId = incoming.id || hashJobUrl(jobUrl);
+    const incomingForceRescan = Boolean(incoming.forceRescan);
+    const scrapedAt = incoming.scrapedAt || Date.now();
+    const incomingRecord = {
+      ...incoming,
+      id: jobId,
+      url: jobUrl,
+      link: jobUrl,
+      scrapedAt,
+      foundAt: incoming.foundAt || scrapedAt,
+      needsFetch: incoming.needsFetch ?? !incoming.descriptionHtml
+    };
+    delete incomingRecord.forceRescan;
+    
+    if (!idToIndex.has(jobId)) {
+      const enriched = await enrichJobMatchData(incomingRecord, validResumes);
+      mergedJobs.push(enriched);
+      idToIndex.set(jobId, mergedJobs.length - 1);
+      lastSeenSet.add(jobId);
+      newJobsCount++;
+      continue;
+    }
+    
+    const existingIndex = idToIndex.get(jobId);
+    const existingJob = mergedJobs[existingIndex];
+    const forceMatch = forceRescan || incomingForceRescan;
+    const mergedRecord = mergeJobRecords(existingJob, incomingRecord, {
+      forceRescan: forceMatch
+    });
+    
+    const descriptionUpdated = !!mergedRecord.descriptionHtml &&
+      mergedRecord.descriptionHtml !== (existingJob.descriptionHtml || '');
+    const shouldRecalculate = (descriptionUpdated || forceMatch) && validResumes.length > 0;
+    
+    if (shouldRecalculate) {
+      const updated = await enrichJobMatchData(mergedRecord, validResumes);
+      mergedJobs[existingIndex] = updated;
+    } else {
+      mergedJobs[existingIndex] = mergedRecord;
     }
   }
   
-  // Merge with existing jobs
-  const allJobs = [...existingJobs, ...deduplicatedJobs];
-  
-  // Update storage
   await chrome.storage.local.set({
-    jobs: allJobs,
-    lastSeenJobIds: Array.from(newJobIds)
+    jobs: mergedJobs,
+    lastSeenJobIds: Array.from(lastSeenSet)
   });
   
   await updateBadge();
+  return newJobsCount;
+}
+
+async function enrichJobMatchData(job, resumes) {
+  const enrichedJob = { ...job };
   
-  return deduplicatedJobs.length;
+  if (!resumes || resumes.length === 0) {
+    enrichedJob.bestResume = null;
+    enrichedJob.matchScore = 0;
+    enrichedJob.topKeywords = [];
+    enrichedJob.score = 0;
+    return enrichedJob;
+  }
+  
+  const textToMatch = getTextForMatching(job);
+  const match = await matchResumeToJob(textToMatch, resumes);
+  enrichedJob.bestResume = match.filename || null;
+  enrichedJob.matchScore = match.score !== undefined && match.score !== null ? match.score : 0;
+  enrichedJob.topKeywords = match.topKeywords || [];
+  enrichedJob.score = enrichedJob.matchScore;
+  return enrichedJob;
+}
+
+function mergeJobRecords(existingJob, incomingJob, { forceRescan = false } = {}) {
+  const merged = { ...existingJob };
+  for (const [key, value] of Object.entries(incomingJob)) {
+    if (value === undefined) continue;
+    merged[key] = value;
+  }
+  merged.foundAt = existingJob.foundAt || incomingJob.foundAt || Date.now();
+  merged.scrapedAt = incomingJob.scrapedAt || existingJob.scrapedAt || Date.now();
+  
+  if (incomingJob.descriptionHtml) {
+    merged.descriptionHtml = incomingJob.descriptionHtml;
+    merged.needsFetch = false;
+  } else if (!forceRescan) {
+    merged.descriptionHtml = existingJob.descriptionHtml || '';
+    if (existingJob.needsFetch === false) {
+      merged.needsFetch = false;
+    } else {
+      merged.needsFetch = true;
+    }
+  } else {
+    merged.needsFetch = true;
+  }
+  
+  return merged;
 }
 
 // NLP functions (inlined from nlp.js to avoid dynamic imports)
@@ -632,6 +680,17 @@ async function matchResumeToJob(jobDescription, resumes) {
   return bestMatch;
 }
 
+function getTextForMatching(job) {
+  if (!job) return '';
+  if (job.descriptionHtml) {
+    return job.descriptionHtml.replace(/<[^>]+>/g, ' ');
+  }
+  if (job.description) {
+    return job.description;
+  }
+  return `${job.title || ''} ${job.company || ''}`.trim();
+}
+
 // Update badge with new job count
 async function updateBadge() {
   try {
@@ -708,6 +767,338 @@ chrome.runtime.onStartup.addListener(() => {
 // Update badge when extension starts
 updateBadge();
 
+// Extract job description from a tab by navigating to it and waiting for content to load
+async function extractJobDescriptionFromTab(jobUrl) {
+  try {
+    // Create or find a tab for extraction
+    let tab = null;
+    const tabs = await chrome.tabs.query({ url: jobUrl.split('?')[0] + '*' });
+    if (tabs.length > 0) {
+      tab = tabs[0];
+    } else {
+      // Create a new tab
+      tab = await chrome.tabs.create({
+        url: jobUrl,
+        active: false
+      });
+      // Wait for tab to load
+      await new Promise((resolve) => {
+        const checkTab = async () => {
+          try {
+            const updatedTab = await chrome.tabs.get(tab.id);
+            if (updatedTab.status === 'complete') {
+              // Wait a bit more for dynamic content to load
+              setTimeout(resolve, 3000);
+            } else {
+              setTimeout(checkTab, 500);
+            }
+          } catch (error) {
+            setTimeout(resolve, 3000);
+          }
+        };
+        checkTab();
+      });
+    }
+    
+    // Inject script to extract description
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: extractDescriptionFromPage
+    });
+    
+    if (results && results[0] && results[0].result) {
+      return results[0].result;
+    }
+    
+    return { descriptionHtml: '', extractors: null };
+  } catch (error) {
+    console.error('Error in extractJobDescriptionFromTab:', error);
+    return { descriptionHtml: '', extractors: null, error: error.message };
+  }
+}
+
+// Function to extract description from the page (runs in page context)
+function extractDescriptionFromPage() {
+  // This function runs in the page context, so it has access to the live DOM
+  const SELECTORS = {
+    jobDetailTitle: [
+      '.jobs-details-top-card__job-title',
+      'h1.jobs-details-top-card__job-title',
+      'h1[data-test-id="job-title"]'
+    ],
+    jobDetailCompany: [
+      '.jobs-details-top-card__company-name',
+      'a.jobs-details-top-card__company-name',
+      'a[data-tracking-control-name="job-details-company-name"]',
+      '.jobs-details-top-card__company-link'
+    ],
+    jobDetailLocation: [
+      '.jobs-details-top-card__bullet',
+      '.jobs-details-top-card__primary-description-without-tagline',
+      'span[data-testid="job-location"]',
+      '.jobs-details-top-card__primary-description li'
+    ],
+    jobDetailDate: [
+      '.jobs-details-top-card__job-insight',
+      '.jobs-details-top-card__job-insight-text-item',
+      'span[data-testid="job-posted-date"]',
+      'time[datetime]'
+    ]
+  };
+  
+  // LinkedIn navigation/header keywords to exclude
+  const NAV_KEYWORDS = [
+    'skip to search', 'skip to main content', 'keyboard shortcuts', 'close jump menu',
+    'new feed updates', 'notifications', 'home', 'my network', 'jobs', 'messaging',
+    'for business', 'advertise', 'me', 'search', 'sign in', 'join now', 'sign up',
+    'linkedin', 'navigation', 'menu', 'header', 'footer', 'sidebar'
+  ];
+  
+  function isNavigationElement(element) {
+    if (!element) return false;
+    
+    const classes = (element.className || '').toLowerCase();
+    if (classes.includes('nav') || classes.includes('header') || 
+        classes.includes('footer') || classes.includes('sidebar') ||
+        classes.includes('global-nav') || classes.includes('top-bar') ||
+        classes.includes('skip-link') || classes.includes('accessibility')) {
+      return true;
+    }
+    
+    const id = (element.id || '').toLowerCase();
+    if (id.includes('nav') || id.includes('header') || id.includes('footer') ||
+        id.includes('skip') || id.includes('accessibility')) {
+      return true;
+    }
+    
+    const text = (element.textContent || '').toLowerCase().trim();
+    if (text.length < 100) {
+      for (const keyword of NAV_KEYWORDS) {
+        if (text.includes(keyword)) {
+          return true;
+        }
+      }
+    }
+    
+    let parent = element.parentElement;
+    for (let i = 0; i < 5 && parent; i++) {
+      const parentClasses = (parent.className || '').toLowerCase();
+      const parentId = (parent.id || '').toLowerCase();
+      if (parentClasses.includes('nav') || parentClasses.includes('header') ||
+          parentClasses.includes('global-nav') || parentId.includes('nav') ||
+          parentId.includes('header')) {
+        return true;
+      }
+      parent = parent.parentElement;
+    }
+    
+    return false;
+  }
+  
+  function extractDescriptionContent(doc) {
+    // Strategy: Find "About the job" heading and get everything after it
+    const allHeadings = doc.querySelectorAll('h1, h2, h3, h4, h5, h6, span, div, p');
+    
+    for (const heading of allHeadings) {
+      // Skip navigation elements
+      if (isNavigationElement(heading)) continue;
+      
+      const headingText = heading.textContent?.trim() || '';
+      const headingLower = headingText.toLowerCase();
+      
+      // Skip if it contains navigation keywords
+      if (NAV_KEYWORDS.some(kw => headingLower.includes(kw))) continue;
+      
+      const isAboutHeading = headingText.toLowerCase().includes('about') && 
+                            (headingText.toLowerCase().includes('job') || 
+                             headingText.toLowerCase().includes('position') ||
+                             headingText.toLowerCase().includes('role') ||
+                             headingText.length < 20);
+      
+      if (isAboutHeading || 
+          headingText.match(/^about$/i) ||
+          headingText.match(/job\s+description/i)) {
+        
+        // Find parent container with substantial content
+        let current = heading;
+        let bestContainer = null;
+        let bestTextLength = 0;
+        
+        for (let depth = 0; depth < 10 && current && current !== document.body; depth++) {
+          if (isNavigationElement(current)) {
+            current = current.parentElement;
+            continue;
+          }
+          
+          const text = current.textContent?.trim() || '';
+          const textLower = text.toLowerCase();
+          const navKeywordCount = NAV_KEYWORDS.filter(kw => textLower.includes(kw)).length;
+          if (navKeywordCount > 3) {
+            current = current.parentElement;
+            continue;
+          }
+          
+          if (text.length > bestTextLength && text.length > 200) {
+            const hasJobKeywords = text.toLowerCase().includes('responsibilities') ||
+                                  text.toLowerCase().includes('requirements') ||
+                                  text.toLowerCase().includes('qualifications') ||
+                                  text.length > 500;
+            
+            if (hasJobKeywords || text.length > 1000) {
+              const tagName = current.tagName?.toUpperCase() || '';
+              if (tagName === 'SECTION' || tagName === 'DIV' || tagName === 'ARTICLE' || 
+                  tagName === 'MAIN' || current.classList.length > 0) {
+                bestContainer = current;
+                bestTextLength = text.length;
+              }
+            }
+          }
+          current = current.parentElement;
+        }
+        
+        if (bestContainer && !isNavigationElement(bestContainer)) {
+          const clone = bestContainer.cloneNode(true);
+          clone.querySelectorAll('nav, header, [class*="nav"], [class*="header"], [id*="nav"], [id*="header"]').forEach(node => node.remove());
+          clone.querySelectorAll('script, style, iframe, object, embed').forEach(node => node.remove());
+          const inner = clone.innerHTML?.trim() || '';
+          
+          const innerLower = inner.toLowerCase();
+          const navCount = NAV_KEYWORDS.filter(kw => innerLower.includes(kw)).length;
+          if (inner.length > 100 && navCount < 3) {
+            return inner;
+          }
+        }
+        
+        // Get all following siblings
+        let sibling = heading.nextElementSibling;
+        const parts = [];
+        let collectedText = '';
+        
+        while (sibling && parts.length < 50) {
+          if (isNavigationElement(sibling)) {
+            sibling = sibling.nextElementSibling;
+            continue;
+          }
+          
+          const tag = sibling.tagName?.toUpperCase() || '';
+          if (tag === 'H1' || tag === 'H2' || tag === 'H3') {
+            const siblingText = sibling.textContent?.trim() || '';
+            const siblingLower = siblingText.toLowerCase();
+            if (NAV_KEYWORDS.some(kw => siblingLower.includes(kw))) {
+              break;
+            }
+            if (siblingText.length > 50 || 
+                !siblingText.toLowerCase().includes('requirements') &&
+                !siblingText.toLowerCase().includes('benefits')) {
+              break;
+            }
+          }
+          
+          const text = sibling.textContent?.trim() || '';
+          const textLower = text.toLowerCase();
+          if (NAV_KEYWORDS.some(kw => textLower.includes(kw)) && text.length < 200) {
+            sibling = sibling.nextElementSibling;
+            continue;
+          }
+          
+          if (text.length > 10) {
+            const clone = sibling.cloneNode(true);
+            clone.querySelectorAll('script, style, iframe, object, embed').forEach(node => node.remove());
+            parts.push(clone.outerHTML);
+            collectedText += text + ' ';
+          }
+          sibling = sibling.nextElementSibling;
+        }
+        
+        if (parts.length > 0 && collectedText.trim().length > 100) {
+          const collectedLower = collectedText.toLowerCase();
+          const navCount = NAV_KEYWORDS.filter(kw => collectedLower.includes(kw)).length;
+          if (navCount < 5) {
+            return parts.join('');
+          }
+        }
+      }
+    }
+    
+    return '';
+  }
+  
+  const rawHtml = extractDescriptionContent(document);
+  
+  // Extract metadata
+  const getTitle = () => {
+    for (const selector of SELECTORS.jobDetailTitle) {
+      const el = document.querySelector(selector);
+      if (el) {
+        const text = el.textContent?.trim();
+        if (text) return text;
+      }
+    }
+    const h1 = document.querySelector('h1');
+    return h1 ? h1.textContent?.trim() : null;
+  };
+  
+  const getCompany = () => {
+    for (const selector of SELECTORS.jobDetailCompany) {
+      const el = document.querySelector(selector);
+      if (el) {
+        const text = el.textContent?.trim();
+        if (text && text.length > 2 && text.length < 50 && /^[A-Z]/.test(text)) {
+          return text;
+        }
+      }
+    }
+    return null;
+  };
+  
+  const getLocation = () => {
+    for (const selector of SELECTORS.jobDetailLocation) {
+      const el = document.querySelector(selector);
+      if (el) {
+        const text = el.textContent?.trim();
+        if (text) return text;
+      }
+    }
+    return null;
+  };
+  
+  const getDate = () => {
+    for (const selector of SELECTORS.jobDetailDate) {
+      const el = document.querySelector(selector);
+      if (el) {
+        const datetime = el.getAttribute('datetime');
+        if (datetime) {
+          try {
+            const date = new Date(datetime);
+            const now = new Date();
+            const diffDays = Math.floor((now - date) / (1000 * 60 * 60 * 24));
+            if (diffDays === 0) return 'Today';
+            else if (diffDays === 1) return '1 day ago';
+            else if (diffDays < 7) return `${diffDays} days ago`;
+            else if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
+            else return `${Math.floor(diffDays / 30)} months ago`;
+          } catch (e) {}
+        }
+        const text = el.textContent?.trim();
+        if (text && text.match(/(\d+\s+(day|week|month)s?\s+ago|Today|Yesterday)/i)) {
+          return text;
+        }
+      }
+    }
+    return null;
+  };
+  
+  return {
+    descriptionHtml: rawHtml,
+    extractors: {
+      getTitle,
+      getCompany,
+      getLocation,
+      getDate
+    }
+  };
+}
+
 // Re-match existing jobs when resumes are added or updated
 chrome.storage.onChanged.addListener(async (changes, areaName) => {
   if (areaName === 'local' && changes.resumes) {
@@ -741,13 +1132,14 @@ chrome.storage.onChanged.addListener(async (changes, areaName) => {
           // Skip if job already has a bestResume (unless we want to re-evaluate)
           // For now, only match jobs that don't have a bestResume
           if (!job.bestResume || job.bestResume === 'N/A' || job.bestResume === null) {
-            const textToMatch = job.description || `${job.title || ''} ${job.company || ''}`.trim();
+            const textToMatch = getTextForMatching(job);
             const match = await matchResumeToJob(textToMatch, validResumes);
             
             if (match.filename) {
               job.bestResume = match.filename;
               job.matchScore = match.score !== undefined && match.score !== null ? match.score : 0;
               job.topKeywords = match.topKeywords || [];
+              job.score = job.matchScore;
               updatedCount++;
             }
           }

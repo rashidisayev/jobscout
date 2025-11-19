@@ -1,6 +1,21 @@
 // Storage utilities for JobScout
 
 /**
+ * @typedef {Object} Job
+ * @property {string} id
+ * @property {string} title
+ * @property {string} company
+ * @property {string} location
+ * @property {string} datePosted
+ * @property {string} url
+ * @property {string=} descriptionHtml
+ * @property {number=} score
+ * @property {number=} matchScore
+ * @property {number} scrapedAt
+ * @property {boolean=} needsFetch
+ */
+
+/**
  * Get a value from chrome.storage.local
  */
 export async function get(key, defaultValue = null) {
@@ -101,5 +116,40 @@ export async function updateRunState(updates) {
     }
   }
   await setMultiple(stateUpdates);
+}
+
+/**
+ * Fetch a job by id.
+ * @param {string} id
+ * @returns {Promise<Job|null>}
+ */
+export async function getJobById(id) {
+  if (!id) return null;
+  const { jobs = [] } = await chrome.storage.local.get(['jobs']);
+  return jobs.find(job => job?.id === id) || null;
+}
+
+/**
+ * Update or insert a job record.
+ * @param {Job} job
+ * @returns {Promise<Job>}
+ */
+export async function updateJob(job) {
+  if (!job || !job.id) {
+    throw new Error('Job must include an id');
+  }
+
+  const { jobs = [] } = await chrome.storage.local.get(['jobs']);
+  const index = jobs.findIndex(existing => existing?.id === job.id);
+
+  if (index === -1) {
+    jobs.push(job);
+    await chrome.storage.local.set({ jobs });
+    return job;
+  }
+
+  jobs[index] = { ...jobs[index], ...job };
+  await chrome.storage.local.set({ jobs });
+  return jobs[index];
 }
 
