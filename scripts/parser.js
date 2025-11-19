@@ -4,7 +4,15 @@
  * Parse a resume file and extract text content
  */
 export async function parseResume(file) {
+  if (!file || !file.name) {
+    throw new Error('Invalid file: file name is missing');
+  }
+  
   const extension = file.name.split('.').pop().toLowerCase();
+  
+  if (!extension) {
+    throw new Error('File has no extension. Please ensure the file has a .pdf, .docx, or .txt extension.');
+  }
   
   switch (extension) {
     case 'pdf':
@@ -14,7 +22,7 @@ export async function parseResume(file) {
     case 'txt':
       return await parseTXT(file);
     default:
-      throw new Error(`Unsupported file type: ${extension}`);
+      throw new Error(`Unsupported file type: .${extension}. Supported formats: PDF (.pdf), DOCX (.docx), and TXT (.txt)`);
   }
 }
 
@@ -24,24 +32,51 @@ export async function parseResume(file) {
 async function parsePDF(file) {
   try {
     // Get the correct path for PDF.js in Chrome extension
-    // Try both relative path and chrome.runtime.getURL
-    let pdfjsPath = '../../vendor/pdfjs/pdf.mjs';
+    let pdfjsPath;
     
     // If we're in a Chrome extension context, use chrome.runtime.getURL
     if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getURL) {
       pdfjsPath = chrome.runtime.getURL('vendor/pdfjs/pdf.mjs');
+    } else {
+      // Fallback to relative path
+      pdfjsPath = './vendor/pdfjs/pdf.mjs';
     }
     
     // Load PDF.js ES module
-    const pdfjsModule = await import(pdfjsPath);
+    let pdfjsModule;
+    try {
+      pdfjsModule = await import(pdfjsPath);
+    } catch (importError) {
+      console.error('Failed to import PDF.js from:', pdfjsPath, importError);
+      // Try alternative path
+      if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getURL) {
+        pdfjsPath = chrome.runtime.getURL('vendor/pdfjs/pdf.mjs');
+        try {
+          pdfjsModule = await import(pdfjsPath);
+        } catch (retryError) {
+          throw new Error(`Failed to load PDF.js library. Please ensure vendor/pdfjs/pdf.mjs exists. Error: ${retryError.message}`);
+        }
+      } else {
+        throw new Error(`Failed to load PDF.js library. Error: ${importError.message}`);
+      }
+    }
     
     // PDF.js ES modules typically export as default or named exports
     const pdfjsLib = pdfjsModule.default || pdfjsModule;
     
+    if (!pdfjsLib || !pdfjsLib.getDocument) {
+      throw new Error('PDF.js library loaded but getDocument method not found. The library may be corrupted.');
+    }
+    
     // Set worker if needed (for PDF.js to work properly)
     if (pdfjsLib.GlobalWorkerOptions && typeof chrome !== 'undefined' && chrome.runtime) {
-      const workerPath = chrome.runtime.getURL('vendor/pdfjs/pdf.worker.mjs');
-      pdfjsLib.GlobalWorkerOptions.workerSrc = workerPath;
+      try {
+        const workerPath = chrome.runtime.getURL('vendor/pdfjs/pdf.worker.mjs');
+        pdfjsLib.GlobalWorkerOptions.workerSrc = workerPath;
+      } catch (workerError) {
+        console.warn('Failed to set PDF.js worker path:', workerError);
+        // Continue without worker - text extraction might still work
+      }
     }
     
     const arrayBuffer = await file.arrayBuffer();
@@ -58,59 +93,117 @@ async function parsePDF(file) {
     }
     
     // Configure PDF.js options for text extraction
-    const pdfOptions = {
-      data: arrayBuffer,
-      // Provide a dummy URL (required by PDF.js but won't be used with custom factory)
-      standardFontDataUrl: 'data:,', // Data URL that won't be fetched
-      // Use our custom factory that returns empty data
-      StandardFontDataFactory: EmptyStandardFontDataFactory,
-      // Disable font face to avoid font loading issues for text extraction
-      disableFontFace: true,
-      // Ignore errors to continue extraction even if fonts fail
-      stopAtErrors: false,
-      // Verbosity level (0 = errors, 1 = warnings, 5 = infos)
-      verbosity: 0
-    };
-    
+    // Try multiple approaches to handle different PDF.js versions
     let pdf;
+    let lastError = null;
+    
+    // Strategy 1: Use custom factory without standardFontDataUrl (for newer PDF.js versions)
     try {
-      pdf = await pdfjsLib.getDocument(pdfOptions).promise;
-    } catch (error) {
-      // If custom factory doesn't work, try with CDN as fallback
-      if (error.message && error.message.includes('standardFontDataUrl')) {
-        console.warn('Custom font factory failed, trying CDN fallback');
+      const pdfOptions1 = {
+        data: arrayBuffer,
+        StandardFontDataFactory: EmptyStandardFontDataFactory,
+        disableFontFace: true,
+        stopAtErrors: false,
+        verbosity: 0
+      };
+      pdf = await pdfjsLib.getDocument(pdfOptions1).promise;
+    } catch (error1) {
+      lastError = error1;
+      console.warn('Strategy 1 (custom factory) failed, trying strategy 2:', error1.message);
+      
+      // Strategy 2: Use custom factory with empty string URL
+      try {
+        const pdfOptions2 = {
+          data: arrayBuffer,
+          standardFontDataUrl: '',
+          StandardFontDataFactory: EmptyStandardFontDataFactory,
+          disableFontFace: true,
+          stopAtErrors: false,
+          verbosity: 0
+        };
+        pdf = await pdfjsLib.getDocument(pdfOptions2).promise;
+      } catch (error2) {
+        lastError = error2;
+        console.warn('Strategy 2 (empty URL) failed, trying strategy 3:', error2.message);
+        
+        // Strategy 3: Try without custom factory (let PDF.js handle fonts)
         try {
-          pdf = await pdfjsLib.getDocument({
+          const pdfOptions3 = {
             data: arrayBuffer,
-            standardFontDataUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/standard_fonts/',
             disableFontFace: true,
             stopAtErrors: false,
             verbosity: 0
-          }).promise;
-        } catch (cdnError) {
-          console.error('Both custom factory and CDN failed:', cdnError);
-          throw new Error(`Failed to parse PDF: ${error.message}. Please ensure the PDF uses embedded fonts or try a different PDF file.`);
+          };
+          pdf = await pdfjsLib.getDocument(pdfOptions3).promise;
+        } catch (error3) {
+          lastError = error3;
+          console.warn('Strategy 3 (no factory) failed, trying strategy 4:', error3.message);
+          
+          // Strategy 4: Minimal options (most compatible)
+          try {
+            pdf = await pdfjsLib.getDocument({
+              data: arrayBuffer,
+              stopAtErrors: false,
+              verbosity: 0
+            }).promise;
+          } catch (error4) {
+            lastError = error4;
+            console.error('All PDF parsing strategies failed');
+            throw new Error(`Failed to parse PDF: ${error4.message}. The PDF file may be corrupted or use unsupported features.`);
+          }
         }
-      } else {
-        throw error;
       }
+    }
+    
+    if (!pdf || !pdf.numPages) {
+      throw new Error('PDF document loaded but has no pages. The file may be corrupted.');
     }
     
     let fullText = '';
     
-    for (let i = 1; i <= pdf.numPages; i++) {
-      const page = await pdf.getPage(i);
-      const textContent = await page.getTextContent();
-      const pageText = textContent.items
-        .map(item => item.str)
-        .join(' ');
-      fullText += pageText + '\n';
+    try {
+      for (let i = 1; i <= pdf.numPages; i++) {
+        try {
+          const page = await pdf.getPage(i);
+          const textContent = await page.getTextContent();
+          
+          if (!textContent || !textContent.items || textContent.items.length === 0) {
+            console.warn(`Page ${i} has no extractable text`);
+            continue;
+          }
+          
+          const pageText = textContent.items
+            .map(item => item.str || '')
+            .filter(str => str.length > 0)
+            .join(' ');
+          fullText += pageText + '\n';
+        } catch (pageError) {
+          console.warn(`Error extracting text from page ${i}:`, pageError);
+          // Continue with other pages
+        }
+      }
+    } catch (extractionError) {
+      console.error('Error during text extraction:', extractionError);
+      throw new Error(`Failed to extract text from PDF: ${extractionError.message}`);
     }
     
-    return fullText.trim();
+    const trimmedText = fullText.trim();
+    if (trimmedText.length === 0) {
+      throw new Error('No text content could be extracted from the PDF. The PDF may contain only images or use unsupported fonts.');
+    }
+    
+    return trimmedText;
   } catch (error) {
     console.error('PDF parsing error:', error);
-    throw new Error(`Failed to parse PDF: ${error.message}. Please ensure PDF.js files (pdf.mjs and pdf.worker.mjs) are in vendor/pdfjs/ folder.`);
+    
+    // Provide more helpful error messages
+    if (error.message.includes('Failed to load PDF.js')) {
+      throw error; // Re-throw library loading errors as-is
+    } else if (error.message.includes('No text content')) {
+      throw error; // Re-throw empty content errors as-is
+    } else {
+      throw new Error(`Failed to parse PDF: ${error.message}. Please ensure:\n- The PDF file is not corrupted\n- The PDF contains readable text (not just images)\n- PDF.js library files are properly installed`);
+    }
   }
 }
 
@@ -126,44 +219,83 @@ async function parseDOCX(file) {
   try {
     // Try to use JSZip if available (user would need to include it)
     if (typeof JSZip !== 'undefined') {
-      const zip = await JSZip.loadAsync(arrayBuffer);
-      const documentXml = await zip.file('word/document.xml').async('string');
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(documentXml, 'text/xml');
-      const textNodes = doc.getElementsByTagName('w:t');
-      let fullText = '';
-      for (let i = 0; i < textNodes.length; i++) {
-        fullText += textNodes[i].textContent + ' ';
+      try {
+        const zip = await JSZip.loadAsync(arrayBuffer);
+        const documentXml = await zip.file('word/document.xml').async('string');
+        if (!documentXml) {
+          throw new Error('DOCX file does not contain word/document.xml');
+        }
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(documentXml, 'text/xml');
+        const textNodes = doc.getElementsByTagName('w:t');
+        let fullText = '';
+        for (let i = 0; i < textNodes.length; i++) {
+          const text = textNodes[i].textContent || '';
+          if (text.trim().length > 0) {
+            fullText += text + ' ';
+          }
+        }
+        const trimmedText = fullText.trim();
+        if (trimmedText.length === 0) {
+          throw new Error('No text content found in DOCX file');
+        }
+        return trimmedText;
+      } catch (jszipError) {
+        console.warn('JSZip parsing failed:', jszipError);
+        throw new Error(`Failed to parse DOCX with JSZip: ${jszipError.message}. Please ensure JSZip library is included or try using PDF format.`);
       }
-      return fullText.trim();
     }
   } catch (error) {
+    if (error.message && error.message.includes('JSZip')) {
+      throw error; // Re-throw JSZip errors
+    }
     console.warn('JSZip not available, using fallback parser');
   }
   
   // Fallback: Extract text from raw bytes (simplified)
   // This works for basic DOCX files but may miss some content
-  const uint8Array = new Uint8Array(arrayBuffer);
-  const text = new TextDecoder('utf-8', { fatal: false }).decode(uint8Array);
-  
-  // Try to extract text between common XML tags
-  const textMatches = text.match(/<w:t[^>]*>([^<]*)<\/w:t>/g);
-  if (textMatches) {
-    return textMatches
-      .map(m => m.replace(/<[^>]+>/g, ''))
-      .join(' ')
-      .trim();
+  try {
+    const uint8Array = new Uint8Array(arrayBuffer);
+    const text = new TextDecoder('utf-8', { fatal: false }).decode(uint8Array);
+    
+    // Try to extract text between common XML tags
+    const textMatches = text.match(/<w:t[^>]*>([^<]*)<\/w:t>/g);
+    if (textMatches && textMatches.length > 0) {
+      const extracted = textMatches
+        .map(m => m.replace(/<[^>]+>/g, ''))
+        .filter(t => t.trim().length > 0)
+        .join(' ')
+        .trim();
+      if (extracted.length > 0) {
+        return extracted;
+      }
+    }
+    
+    // Last resort: return readable text from the buffer
+    const readableText = text.replace(/[^\x20-\x7E\n\r]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (readableText.length === 0) {
+      throw new Error('No readable text found in DOCX file. The file may be corrupted or in an unsupported format.');
+    }
+    return readableText;
+  } catch (error) {
+    throw new Error(`Failed to parse DOCX file: ${error.message}. For better DOCX support, please include JSZip library or convert to PDF format.`);
   }
-  
-  // Last resort: return readable text from the buffer
-  return text.replace(/[^\x20-\x7E\n\r]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 /**
  * Parse TXT file
  */
 async function parseTXT(file) {
-  return await file.text();
+  try {
+    const text = await file.text();
+    if (!text || text.trim().length === 0) {
+      throw new Error('TXT file is empty or contains no readable text');
+    }
+    return text.trim();
+  } catch (error) {
+    console.error('TXT parsing error:', error);
+    throw new Error(`Failed to parse TXT file: ${error.message}. The file may be corrupted or in an unsupported encoding.`);
+  }
 }
 
 // Note: For better DOCX parsing, you can include JSZip library:

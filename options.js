@@ -232,9 +232,25 @@ async function handleResumeUpload(event, index) {
     return;
   }
   
+  // Show loading state
+  const fileInput = event.target;
+  const originalLabel = fileInput.nextElementSibling;
+  if (originalLabel) {
+    originalLabel.textContent = 'Parsing...';
+    originalLabel.style.opacity = '0.6';
+  }
+  
   try {
     const parserModule = await import('./scripts/parser.js');
     const text = await parserModule.parseResume(file);
+    
+    if (!text || text.trim().length === 0) {
+      throw new Error('No text content extracted from the file. The file may be corrupted or in an unsupported format.');
+    }
+    
+    if (text.trim().length < 10) {
+      throw new Error('Extracted text is too short. The file may not contain readable text or may be corrupted.');
+    }
     
     const settings = await chrome.storage.local.get(['resumes']);
     const resumes = settings.resumes || [];
@@ -243,15 +259,36 @@ async function handleResumeUpload(event, index) {
       filename: file.name,
       size: file.size,
       text: text,
-      wordCount: text.split(/\s+/).length,
+      wordCount: text.split(/\s+/).filter(word => word.length > 0).length,
       updatedAt: Date.now()
     };
     
     await chrome.storage.local.set({ resumes: resumes });
     await loadResumes();
+    
+    // Show success message
+    if (originalLabel) {
+      originalLabel.textContent = 'Resume uploaded!';
+      originalLabel.style.color = '#28a745';
+      setTimeout(() => {
+        originalLabel.style.color = '';
+      }, 2000);
+    }
   } catch (error) {
     console.error('Error parsing resume:', error);
-    alert('Error parsing resume. Please try again.');
+    
+    // Reset label
+    if (originalLabel) {
+      originalLabel.textContent = 'Upload Resume';
+      originalLabel.style.opacity = '1';
+    }
+    
+    // Show detailed error message
+    const errorMessage = error.message || 'Unknown error occurred';
+    alert(`Error parsing resume: ${errorMessage}\n\nPlease ensure:\n- The file is a valid PDF, DOCX, or TXT file\n- The file is not corrupted\n- The file contains readable text\n- For PDFs: The file uses standard fonts or embedded fonts`);
+  } finally {
+    // Reset file input
+    event.target.value = '';
   }
 }
 
@@ -872,7 +909,7 @@ function extractDescriptionFromLivePage() {
   };
   
   const getDate = () => {
-    // First try all date selectors
+    // Simple approach - try all date selectors (similar to location)
     for (const selector of SELECTORS.jobDetailDate) {
       const el = document.querySelector(selector);
       if (el) {
@@ -889,12 +926,14 @@ function extractDescriptionFromLivePage() {
             else if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
             else return `${Math.floor(diffDays / 30)} months ago`;
           } catch (e) {
-            if (text && text.match(/(\d+\s+(day|week|month)s?\s+ago|Just\s+now|Today|Yesterday)/i)) {
-              return text;
-            }
+            if (text) return text;
           }
-        }
-        if (text && text.match(/(\d+\s+(day|week|month)s?\s+ago|Just\s+now|Today|Yesterday)/i)) {
+        } else if (text) {
+          // Extract date from "Reposted/Posted X weeks ago" format
+          const dateMatch = text.match(/(?:reposted|posted)\s+(.+)/i);
+          if (dateMatch && dateMatch[1]) {
+            return dateMatch[1].trim();
+          }
           return text;
         }
       }
@@ -916,7 +955,24 @@ function extractDescriptionFromLivePage() {
           else return `${Math.floor(diffDays / 30)} months ago`;
         } catch (e) {
           const text = el.textContent?.trim();
-          if (text) return text;
+          if (text) {
+            // Extract date from "Reposted/Posted X weeks ago" format
+            const dateMatch = text.match(/(?:reposted|posted)\s+(.+)/i);
+            if (dateMatch && dateMatch[1]) {
+              return dateMatch[1].trim();
+            }
+            return text;
+          }
+        }
+      } else {
+        const text = el.textContent?.trim();
+        if (text) {
+          // Extract date from "Reposted/Posted X weeks ago" format
+          const dateMatch = text.match(/(?:reposted|posted)\s+(.+)/i);
+          if (dateMatch && dateMatch[1]) {
+            return dateMatch[1].trim();
+          }
+          return text;
         }
       }
     }
@@ -925,33 +981,12 @@ function extractDescriptionFromLivePage() {
     const allTimeElements = document.querySelectorAll('time');
     for (const el of allTimeElements) {
       const text = el.textContent?.trim();
-      if (text && text.match(/(\d+\s+(day|week|month)s?\s+ago|Just\s+now|Today|Yesterday)/i)) {
-        return text;
-      }
-    }
-    
-    // Fallback: look for date patterns in page text
-    const pageText = document.body?.textContent || '';
-    const datePatterns = [
-      /(\d+\s+(day|week|month|hour|minute)s?\s+ago)/i,
-      /(Just\s+now|Today|Yesterday)/i,
-      /(Posted\s+(\d+\s+(day|week|month)s?\s+ago))/i,
-      /(Posted\s+(Just\s+now|Today|Yesterday))/i,
-      /(\d+d\s+ago|\d+w\s+ago|\d+m\s+ago)/i,
-      /(Active\s+(\d+\s+(day|week|month)s?\s+ago))/i
-    ];
-    for (const pattern of datePatterns) {
-      const match = pageText.match(pattern);
-      if (match) {
-        return match[1] || match[0];
-      }
-    }
-    
-    // Last fallback: look through all job insight elements
-    const insightElements = document.querySelectorAll('.jobs-details-top-card__job-insight, .jobs-details-top-card__job-insight-text-item, li');
-    for (const el of insightElements) {
-      const text = el.textContent?.trim();
-      if (text && text.match(/(\d+\s+(day|week|month)s?\s+ago|Just\s+now|Today|Yesterday)/i)) {
+      if (text) {
+        // Extract date from "Reposted/Posted X weeks ago" format
+        const dateMatch = text.match(/(?:reposted|posted)\s+(.+)/i);
+        if (dateMatch && dateMatch[1]) {
+          return dateMatch[1].trim();
+        }
         return text;
       }
     }

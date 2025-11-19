@@ -217,34 +217,7 @@ async function scrapeJobs(onlyNew = true, lastSeenIds = [], pageIndex = 0) {
           const constructedLink = `https://www.linkedin.com/jobs/view/${jobIdAttr}`;
           const title = findElement(SELECTORS.jobTitle, card)?.textContent?.trim() || 'Unknown';
           
-          // Helper function to validate if text looks like a date (not location)
-          const isValidDateText = (text) => {
-            if (!text || text.length === 0) return false;
-            
-            // Must contain date-related keywords
-            const hasDateKeywords = text.match(/\b(ago|day|days|week|weeks|month|months|hour|hours|minute|minutes|today|yesterday|just|now|posted|active)\b/i);
-            if (!hasDateKeywords) return false;
-            
-            // Must match date patterns
-            const isDatePattern = text.match(/(\d+\s+(day|week|month|hour|minute)s?\s+ago|Just\s+now|Today|Yesterday|\d+d\s+ago|\d+w\s+ago|\d+m\s+ago|Posted\s+\d+)/i);
-            if (!isDatePattern) return false;
-            
-            // Exclude obvious location patterns
-            const isLocationPattern = text.match(/(Remote|On-site|Hybrid|United States|USA|Canada|UK|Europe|Asia|Australia|Germany|France|Spain|Italy|New York|San Francisco|Los Angeles|Chicago|Boston|Seattle|Austin|Denver|Atlanta|London|Toronto|Vancouver|Sydney|Melbourne)/i);
-            if (isLocationPattern) return false;
-            
-            // Exclude city, state patterns (e.g., "San Francisco, CA")
-            const isCityStatePattern = text.match(/^[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?,\s*[A-Z]{2}$/);
-            if (isCityStatePattern) return false;
-            
-            // Exclude if it contains common location keywords
-            const hasLocationKeywords = text.match(/\b(location|city|state|country|address|place|area|region|zone)\b/i);
-            if (hasLocationKeywords) return false;
-            
-            return true;
-          };
-          
-          // Extract date with comprehensive logic
+          // Extract date - aggressive approach (similar to location)
           let datePosted = 'Unknown';
           const dateElement = findElement(SELECTORS.jobDate, card);
           if (dateElement) {
@@ -261,14 +234,20 @@ async function scrapeJobs(onlyNew = true, lastSeenIds = [], pageIndex = 0) {
                 else datePosted = `${Math.floor(diffDays / 30)} months ago`;
               } catch (e) {
                 const text = dateElement.textContent?.trim();
-                if (text && isValidDateText(text)) {
+                if (text) {
                   datePosted = text;
                 }
               }
             } else {
               const text = dateElement.textContent?.trim();
-              if (text && isValidDateText(text)) {
-                datePosted = text;
+              if (text) {
+                // Extract date from "Reposted/Posted X weeks ago" format
+                const dateMatch = text.match(/(?:reposted|posted)\s+(.+)/i);
+                if (dateMatch && dateMatch[1]) {
+                  datePosted = dateMatch[1].trim();
+                } else {
+                  datePosted = text;
+                }
               }
             }
           }
@@ -291,15 +270,40 @@ async function scrapeJobs(onlyNew = true, lastSeenIds = [], pageIndex = 0) {
                   break;
                 } catch (e) {
                   const text = timeEl.textContent?.trim();
-                  if (text && isValidDateText(text)) {
+                  if (text) {
                     datePosted = text;
                     break;
                   }
                 }
               } else {
                 const text = timeEl.textContent?.trim();
-                if (text && isValidDateText(text)) {
+                if (text) {
                   datePosted = text;
+                  break;
+                }
+              }
+            }
+          }
+          
+          // If still unknown, search through all metadata elements
+          if (datePosted === 'Unknown') {
+            const metadataElements = card.querySelectorAll('.job-search-card__metadata-item, .base-search-card__metadata-item, .job-card-container__metadata-item, .base-search-card__metadata, .job-search-card__metadata, li, span, div');
+            for (const el of metadataElements) {
+              const text = el.textContent?.trim() || '';
+              if (!text || text.length > 50) continue;
+              
+              // Check if it looks like a date
+              if (text.match(/\b(ago|day|days|week|weeks|month|months|hour|hours|minute|minutes|today|yesterday|just|now|posted|active|reposted)\b/i)) {
+                // Exclude location patterns
+                if (!text.match(/(Remote|On-site|Hybrid|United States|USA|Canada|UK|Europe|Asia|Australia|Germany|France|Spain|Italy|New York|San Francisco|Los Angeles|Chicago|Boston|Seattle|Austin|Denver|Atlanta|London|Toronto|Vancouver|Sydney|Melbourne)/i) &&
+                    !text.match(/^[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?,\s*[A-Z]{2}$/)) {
+                  // Extract date from "Reposted/Posted X weeks ago" format
+                  const dateMatch = text.match(/(?:reposted|posted)\s+(.+)/i);
+                  if (dateMatch && dateMatch[1]) {
+                    datePosted = dateMatch[1].trim();
+                  } else {
+                    datePosted = text;
+                  }
                   break;
                 }
               }
@@ -447,40 +451,18 @@ async function scrapeJobs(onlyNew = true, lastSeenIds = [], pageIndex = 0) {
         }
       }
       
-      // Try multiple methods to extract date
+      // Extract date - similar to location extraction (aggressive approach)
       let datePosted = 'Unknown';
       
-      // Helper function to validate if text looks like a date (not location)
-      const isValidDateText = (text) => {
-        if (!text || text.length === 0) return false;
-        
-        // Must contain date-related keywords
-        const hasDateKeywords = text.match(/\b(ago|day|days|week|weeks|month|months|hour|hours|minute|minutes|today|yesterday|just|now|posted|active)\b/i);
-        if (!hasDateKeywords) return false;
-        
-        // Must match date patterns
-        const isDatePattern = text.match(/(\d+\s+(day|week|month|hour|minute)s?\s+ago|Just\s+now|Today|Yesterday|\d+d\s+ago|\d+w\s+ago|\d+m\s+ago|Posted\s+\d+)/i);
-        if (!isDatePattern) return false;
-        
-        // Exclude obvious location patterns
-        const isLocationPattern = text.match(/(Remote|On-site|Hybrid|United States|USA|Canada|UK|Europe|Asia|Australia|Germany|France|Spain|Italy|New York|San Francisco|Los Angeles|Chicago|Boston|Seattle|Austin|Denver|Atlanta|London|Toronto|Vancouver|Sydney|Melbourne)/i);
-        if (isLocationPattern) return false;
-        
-        // Exclude city, state patterns (e.g., "San Francisco, CA")
-        const isCityStatePattern = text.match(/^[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?,\s*[A-Z]{2}$/);
-        if (isCityStatePattern) return false;
-        
-        // Exclude if it contains common location keywords
-        const hasLocationKeywords = text.match(/\b(location|city|state|country|address|place|area|region|zone)\b/i);
-        if (hasLocationKeywords) return false;
-        
-        return true;
-      };
-      
-      // First, try all date selectors
+      // First, try all date selectors (similar to location)
       const dateElement = findElement(SELECTORS.jobDate, card);
       if (dateElement) {
-        let dateText = dateElement.textContent?.trim() || '';
+        console.log('Found date element:', {
+          tag: dateElement.tagName,
+          classes: dateElement.className,
+          text: dateElement.textContent?.trim(),
+          datetime: dateElement.getAttribute('datetime')
+        });
         // Try to get datetime attribute if it's a time element
         const datetime = dateElement.getAttribute('datetime');
         if (datetime) {
@@ -494,20 +476,23 @@ async function scrapeJobs(onlyNew = true, lastSeenIds = [], pageIndex = 0) {
             else if (diffDays < 30) datePosted = `${Math.floor(diffDays / 7)} weeks ago`;
             else datePosted = `${Math.floor(diffDays / 30)} months ago`;
           } catch (e) {
-            // Fall back to text content - only accept if it's a valid date
+            // Fall back to text content
+            const dateText = dateElement.textContent?.trim() || '';
             if (dateText) {
-              dateText = dateText.replace(/\s+/g, ' ').trim();
-              if (isValidDateText(dateText)) {
-                datePosted = dateText;
-              }
+              datePosted = dateText;
             }
           }
-        } else if (dateText) {
-          // Clean up the text - remove extra whitespace
-          dateText = dateText.replace(/\s+/g, ' ').trim();
-          // Only accept if it's a valid date pattern
-          if (isValidDateText(dateText)) {
-            datePosted = dateText;
+        } else {
+          // No datetime attribute, extract date from text content
+          const dateText = dateElement.textContent?.trim() || '';
+          if (dateText) {
+            // Extract date from "Reposted/Posted X weeks ago" format
+            const dateMatch = dateText.match(/(?:reposted|posted)\s+(.+)/i);
+            if (dateMatch && dateMatch[1]) {
+              datePosted = dateMatch[1].trim();
+            } else {
+              datePosted = dateText;
+            }
           }
         }
       }
@@ -530,16 +515,21 @@ async function scrapeJobs(onlyNew = true, lastSeenIds = [], pageIndex = 0) {
               break;
             } catch (e) {
               const text = timeEl.textContent?.trim();
-              if (text && isValidDateText(text)) {
+              if (text) {
                 datePosted = text;
                 break;
               }
             }
           } else {
-            // Even without datetime, check text content but validate it
             const text = timeEl.textContent?.trim();
-            if (text && isValidDateText(text)) {
-              datePosted = text;
+            if (text) {
+              // Extract date from "Reposted/Posted X weeks ago" format
+              const dateMatch = text.match(/(?:reposted|posted)\s+(.+)/i);
+              if (dateMatch && dateMatch[1]) {
+                datePosted = dateMatch[1].trim();
+              } else {
+                datePosted = text;
+              }
               break;
             }
           }
@@ -551,71 +541,88 @@ async function scrapeJobs(onlyNew = true, lastSeenIds = [], pageIndex = 0) {
         const allTimeElements = card.querySelectorAll('time');
         for (const timeEl of allTimeElements) {
           const text = timeEl.textContent?.trim();
-          if (text && isValidDateText(text)) {
-            datePosted = text;
+          if (text) {
+            // Extract date from "Reposted/Posted X weeks ago" format
+            const dateMatch = text.match(/(?:reposted|posted)\s+(.+)/i);
+            if (dateMatch && dateMatch[1]) {
+              datePosted = dateMatch[1].trim();
+            } else {
+              datePosted = text;
+            }
             break;
           }
         }
       }
       
-      // If still unknown, try to find date patterns in text
+      // If still unknown, search through all metadata elements (similar to location extraction)
       if (datePosted === 'Unknown') {
-        const cardText = card.textContent || '';
-        const cardInnerText = card.innerText || '';
-        const allText = cardText + ' ' + cardInnerText;
-        
-        // More comprehensive date patterns
-        const datePatterns = [
-          /(\d+\s+(day|week|month|hour|minute)s?\s+ago)/i,
-          /(Just\s+now|Today|Yesterday)/i,
-          /(Posted\s+(\d+\s+(day|week|month)s?\s+ago))/i,
-          /(Posted\s+(Just\s+now|Today|Yesterday))/i,
-          /(\d+d\s+ago|\d+w\s+ago|\d+m\s+ago)/i, // Short formats like "3d ago"
-          /(Active\s+(\d+\s+(day|week|month)s?\s+ago))/i
-        ];
-        
-        for (const pattern of datePatterns) {
-          const match = allText.match(pattern);
-          if (match) {
-            datePosted = match[1] || match[0];
-            break;
-          }
-        }
-      }
-      
-      // If still unknown, look through all metadata elements
-      if (datePosted === 'Unknown') {
-        const metadataElements = card.querySelectorAll('.job-search-card__metadata-item, .base-search-card__metadata, .job-card-container__metadata-item, .base-search-card__metadata-item, li, span');
+        // Look through all metadata elements in the card
+        const metadataElements = card.querySelectorAll('.job-search-card__metadata-item, .base-search-card__metadata-item, .job-card-container__metadata-item, .base-search-card__metadata, .job-search-card__metadata, li, span, div');
         for (const el of metadataElements) {
-          const text = el.textContent?.trim();
+          const text = el.textContent?.trim() || '';
+          if (!text || text.length > 50) continue; // Skip long text (likely description)
+          
+          // Check if it looks like a date (contains date keywords)
+          if (text.match(/\b(ago|day|days|week|weeks|month|months|hour|hours|minute|minutes|today|yesterday|just|now|posted|active|reposted)\b/i)) {
+            // Make sure it's not a location (exclude obvious location patterns)
+            if (!text.match(/(Remote|On-site|Hybrid|United States|USA|Canada|UK|Europe|Asia|Australia|Germany|France|Spain|Italy|New York|San Francisco|Los Angeles|Chicago|Boston|Seattle|Austin|Denver|Atlanta|London|Toronto|Vancouver|Sydney|Melbourne)/i) &&
+                !text.match(/^[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?,\s*[A-Z]{2}$/)) {
+              // Extract date from "Reposted/Posted X weeks ago" format
+              const dateMatch = text.match(/(?:reposted|posted)\s+(.+)/i);
+              if (dateMatch && dateMatch[1]) {
+                datePosted = dateMatch[1].trim();
+              } else {
+                datePosted = text;
+              }
+              break;
+            }
+          }
+        }
+      }
+      
+      // Last resort: search through all text elements in the card
+      if (datePosted === 'Unknown') {
+        const allElements = card.querySelectorAll('span, li, div, p, time');
+        for (const el of allElements) {
+          const text = el.textContent?.trim() || '';
           if (!text || text.length > 50) continue;
           
-          // Check if it looks like a date and is not a location
-          if (isValidDateText(text)) {
-            datePosted = text;
-            break;
+          // Check for date patterns (including "Reposted" and "Posted")
+          if (text.match(/\b(ago|day|days|week|weeks|month|months|hour|hours|minute|minutes|today|yesterday|just|now|posted|active|reposted)\b/i)) {
+            // Exclude location patterns
+            if (!text.match(/(Remote|On-site|Hybrid|United States|USA|Canada|UK|Europe|Asia|Australia|Germany|France|Spain|Italy|New York|San Francisco|Los Angeles|Chicago|Boston|Seattle|Austin|Denver|Atlanta|London|Toronto|Vancouver|Sydney|Melbourne)/i) &&
+                !text.match(/^[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?,\s*[A-Z]{2}$/)) {
+              // Extract date from "Reposted/Posted X weeks ago" format
+              const dateMatch = text.match(/(?:reposted|posted)\s+(.+)/i);
+              if (dateMatch && dateMatch[1]) {
+                datePosted = dateMatch[1].trim();
+              } else {
+                datePosted = text;
+              }
+              console.log('Found date in text element:', text, '-> extracted:', datePosted);
+              break;
+            }
           }
         }
       }
       
-      // Last resort: search through all text in the card for date patterns
+      // Debug logging if still unknown
       if (datePosted === 'Unknown') {
-        const cardText = card.textContent || card.innerText || '';
-        // Look for date patterns anywhere in the card
-        const datePatterns = [
-          /(\d+\s+(day|week|month|hour|minute)s?\s+ago)/i,
-          /(Just\s+now|Today|Yesterday)/i,
-          /(Posted\s+(\d+\s+(day|week|month)s?\s+ago))/i,
-          /(Posted\s+(Just\s+now|Today|Yesterday))/i,
-          /(\d+d\s+ago|\d+w\s+ago|\d+m\s+ago)/i
-        ];
-        for (const pattern of datePatterns) {
-          const match = cardText.match(pattern);
-          if (match) {
-            datePosted = match[1] || match[0];
-            break;
-          }
-        }
+        console.warn('Date extraction failed for job card:', {
+          title: title,
+          company: company,
+          location: location,
+          cardHTML: card.innerHTML.substring(0, 500),
+          allTimeElements: Array.from(card.querySelectorAll('time')).map(el => ({
+            text: el.textContent?.trim(),
+            datetime: el.getAttribute('datetime'),
+            classes: el.className
+          })),
+          metadataElements: Array.from(card.querySelectorAll('.base-search-card__metadata-item, .job-search-card__metadata-item')).map(el => ({
+            text: el.textContent?.trim(),
+            classes: el.className
+          }))
+        });
       }
       
       // If we still have unknowns, try extracting from card's full text structure
@@ -949,16 +956,15 @@ async function getJobDescription(jobUrl) {
       return null;
     };
     
-    // Extract date with multiple fallbacks
+    // Extract date - simple approach (similar to location)
     const getDate = () => {
-      // First try all date selectors
       const dateSelectors = Array.isArray(SELECTORS.jobDetailDate)
         ? SELECTORS.jobDetailDate
         : [SELECTORS.jobDetailDate];
       for (const selector of dateSelectors) {
         const element = doc.querySelector(selector);
         if (element) {
-          const text = element.textContent.trim();
+          const text = element.textContent?.trim();
           const datetime = element.getAttribute('datetime');
           if (datetime) {
             try {
@@ -973,8 +979,12 @@ async function getJobDescription(jobUrl) {
             } catch (e) {
               if (text) return text;
             }
-          }
-          if (text && text.match(/(\d+\s+(day|week|month)s?\s+ago|Just\s+now|Today|Yesterday)/i)) {
+          } else if (text) {
+            // Extract date from "Reposted/Posted X weeks ago" format
+            const dateMatch = text.match(/(?:reposted|posted)\s+(.+)/i);
+            if (dateMatch && dateMatch[1]) {
+              return dateMatch[1].trim();
+            }
             return text;
           }
         }
@@ -995,8 +1005,25 @@ async function getJobDescription(jobUrl) {
             else if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
             else return `${Math.floor(diffDays / 30)} months ago`;
           } catch (e) {
-            const text = el.textContent.trim();
-            if (text) return text;
+            const text = el.textContent?.trim();
+            if (text) {
+              // Extract date from "Reposted/Posted X weeks ago" format
+              const dateMatch = text.match(/(?:reposted|posted)\s+(.+)/i);
+              if (dateMatch && dateMatch[1]) {
+                return dateMatch[1].trim();
+              }
+              return text;
+            }
+          }
+        } else {
+          const text = el.textContent?.trim();
+          if (text) {
+            // Extract date from "Reposted/Posted X weeks ago" format
+            const dateMatch = text.match(/(?:reposted|posted)\s+(.+)/i);
+            if (dateMatch && dateMatch[1]) {
+              return dateMatch[1].trim();
+            }
+            return text;
           }
         }
       }
@@ -1004,34 +1031,13 @@ async function getJobDescription(jobUrl) {
       // Fallback: look for all time elements (even without datetime)
       const allTimeElements = doc.querySelectorAll('time');
       for (const el of allTimeElements) {
-        const text = el.textContent.trim();
-        if (text && text.match(/(\d+\s+(day|week|month)s?\s+ago|Just\s+now|Today|Yesterday)/i)) {
-          return text;
-        }
-      }
-      
-      // Fallback: look for date patterns in page text
-      const pageText = doc.body.textContent || '';
-      const datePatterns = [
-        /(\d+\s+(day|week|month|hour|minute)s?\s+ago)/i,
-        /(Just\s+now|Today|Yesterday)/i,
-        /(Posted\s+(\d+\s+(day|week|month)s?\s+ago))/i,
-        /(Posted\s+(Just\s+now|Today|Yesterday))/i,
-        /(\d+d\s+ago|\d+w\s+ago|\d+m\s+ago)/i,
-        /(Active\s+(\d+\s+(day|week|month)s?\s+ago))/i
-      ];
-      for (const pattern of datePatterns) {
-        const match = pageText.match(pattern);
-        if (match) {
-          return match[1] || match[0];
-        }
-      }
-      
-      // Last fallback: look through all job insight elements
-      const insightElements = doc.querySelectorAll('.jobs-details-top-card__job-insight, .jobs-details-top-card__job-insight-text-item, li');
-      for (const el of insightElements) {
-        const text = el.textContent.trim();
-        if (text && text.match(/(\d+\s+(day|week|month)s?\s+ago|Just\s+now|Today|Yesterday)/i)) {
+        const text = el.textContent?.trim();
+        if (text) {
+          // Extract date from "Reposted/Posted X weeks ago" format
+          const dateMatch = text.match(/(?:reposted|posted)\s+(.+)/i);
+          if (dateMatch && dateMatch[1]) {
+            return dateMatch[1].trim();
+          }
           return text;
         }
       }

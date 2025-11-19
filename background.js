@@ -1070,7 +1070,7 @@ function extractDescriptionFromPage() {
   };
   
   const getDate = () => {
-    // First try all date selectors
+    // Simple approach - try all date selectors (similar to location)
     for (const selector of SELECTORS.jobDetailDate) {
       const el = document.querySelector(selector);
       if (el) {
@@ -1087,12 +1087,14 @@ function extractDescriptionFromPage() {
             else if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
             else return `${Math.floor(diffDays / 30)} months ago`;
           } catch (e) {
-            if (text && text.match(/(\d+\s+(day|week|month)s?\s+ago|Just\s+now|Today|Yesterday)/i)) {
-              return text;
-            }
+            if (text) return text;
           }
-        }
-        if (text && text.match(/(\d+\s+(day|week|month)s?\s+ago|Just\s+now|Today|Yesterday)/i)) {
+        } else if (text) {
+          // Extract date from "Reposted/Posted X weeks ago" format
+          const dateMatch = text.match(/(?:reposted|posted)\s+(.+)/i);
+          if (dateMatch && dateMatch[1]) {
+            return dateMatch[1].trim();
+          }
           return text;
         }
       }
@@ -1114,7 +1116,24 @@ function extractDescriptionFromPage() {
           else return `${Math.floor(diffDays / 30)} months ago`;
         } catch (e) {
           const text = el.textContent?.trim();
-          if (text) return text;
+          if (text) {
+            // Extract date from "Reposted/Posted X weeks ago" format
+            const dateMatch = text.match(/(?:reposted|posted)\s+(.+)/i);
+            if (dateMatch && dateMatch[1]) {
+              return dateMatch[1].trim();
+            }
+            return text;
+          }
+        }
+      } else {
+        const text = el.textContent?.trim();
+        if (text) {
+          // Extract date from "Reposted/Posted X weeks ago" format
+          const dateMatch = text.match(/(?:reposted|posted)\s+(.+)/i);
+          if (dateMatch && dateMatch[1]) {
+            return dateMatch[1].trim();
+          }
+          return text;
         }
       }
     }
@@ -1123,33 +1142,12 @@ function extractDescriptionFromPage() {
     const allTimeElements = document.querySelectorAll('time');
     for (const el of allTimeElements) {
       const text = el.textContent?.trim();
-      if (text && text.match(/(\d+\s+(day|week|month)s?\s+ago|Just\s+now|Today|Yesterday)/i)) {
-        return text;
-      }
-    }
-    
-    // Fallback: look for date patterns in page text
-    const pageText = document.body?.textContent || '';
-    const datePatterns = [
-      /(\d+\s+(day|week|month|hour|minute)s?\s+ago)/i,
-      /(Just\s+now|Today|Yesterday)/i,
-      /(Posted\s+(\d+\s+(day|week|month)s?\s+ago))/i,
-      /(Posted\s+(Just\s+now|Today|Yesterday))/i,
-      /(\d+d\s+ago|\d+w\s+ago|\d+m\s+ago)/i,
-      /(Active\s+(\d+\s+(day|week|month)s?\s+ago))/i
-    ];
-    for (const pattern of datePatterns) {
-      const match = pageText.match(pattern);
-      if (match) {
-        return match[1] || match[0];
-      }
-    }
-    
-    // Last fallback: look through all job insight elements
-    const insightElements = document.querySelectorAll('.jobs-details-top-card__job-insight, .jobs-details-top-card__job-insight-text-item, li');
-    for (const el of insightElements) {
-      const text = el.textContent?.trim();
-      if (text && text.match(/(\d+\s+(day|week|month)s?\s+ago|Just\s+now|Today|Yesterday)/i)) {
+      if (text) {
+        // Extract date from "Reposted/Posted X weeks ago" format
+        const dateMatch = text.match(/(?:reposted|posted)\s+(.+)/i);
+        if (dateMatch && dateMatch[1]) {
+          return dateMatch[1].trim();
+        }
         return text;
       }
     }
