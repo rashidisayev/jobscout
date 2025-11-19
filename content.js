@@ -45,20 +45,23 @@ const SELECTORS = {
   jobDate: [
     '.job-search-card__listdate',
     '.job-search-card__listdate--new',
-    'time',
-    '.job-card-container__listed-date',
     'time[datetime]',
+    '.job-card-container__listed-date',
     'span[data-testid="job-posted-date"]',
-    '.job-search-card__metadata-item time',
-    '.base-search-card__metadata time',
-    '.job-card-container__metadata-item time',
+    '.job-search-card__metadata-item time[datetime]',
+    '.base-search-card__metadata time[datetime]',
+    '.job-card-container__metadata-item time[datetime]',
     'li[data-testid="job-posted-date"]',
-    '.jobs-search-results__list-item time',
+    '.jobs-search-results__list-item time[datetime]',
     'span.job-search-card__listdate',
     'div.job-search-card__listdate',
     '[class*="listdate"]',
     '[class*="listed-date"]',
-    '[class*="posted-date"]'
+    '[class*="posted-date"]',
+    // Additional selectors for newer LinkedIn layouts - prioritize time elements with datetime
+    '.base-search-card__metadata-item time[datetime]',
+    '[data-test-id="job-posted-date"]',
+    '.job-card-container__metadata-wrapper time[datetime]'
   ],
   jobLink: [
     '.job-search-card__title-link',
@@ -213,6 +216,96 @@ async function scrapeJobs(onlyNew = true, lastSeenIds = [], pageIndex = 0) {
           // Construct URL from job ID if we have it
           const constructedLink = `https://www.linkedin.com/jobs/view/${jobIdAttr}`;
           const title = findElement(SELECTORS.jobTitle, card)?.textContent?.trim() || 'Unknown';
+          
+          // Helper function to validate if text looks like a date (not location)
+          const isValidDateText = (text) => {
+            if (!text || text.length === 0) return false;
+            
+            // Must contain date-related keywords
+            const hasDateKeywords = text.match(/\b(ago|day|days|week|weeks|month|months|hour|hours|minute|minutes|today|yesterday|just|now|posted|active)\b/i);
+            if (!hasDateKeywords) return false;
+            
+            // Must match date patterns
+            const isDatePattern = text.match(/(\d+\s+(day|week|month|hour|minute)s?\s+ago|Just\s+now|Today|Yesterday|\d+d\s+ago|\d+w\s+ago|\d+m\s+ago|Posted\s+\d+)/i);
+            if (!isDatePattern) return false;
+            
+            // Exclude obvious location patterns
+            const isLocationPattern = text.match(/(Remote|On-site|Hybrid|United States|USA|Canada|UK|Europe|Asia|Australia|Germany|France|Spain|Italy|New York|San Francisco|Los Angeles|Chicago|Boston|Seattle|Austin|Denver|Atlanta|London|Toronto|Vancouver|Sydney|Melbourne)/i);
+            if (isLocationPattern) return false;
+            
+            // Exclude city, state patterns (e.g., "San Francisco, CA")
+            const isCityStatePattern = text.match(/^[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?,\s*[A-Z]{2}$/);
+            if (isCityStatePattern) return false;
+            
+            // Exclude if it contains common location keywords
+            const hasLocationKeywords = text.match(/\b(location|city|state|country|address|place|area|region|zone)\b/i);
+            if (hasLocationKeywords) return false;
+            
+            return true;
+          };
+          
+          // Extract date with comprehensive logic
+          let datePosted = 'Unknown';
+          const dateElement = findElement(SELECTORS.jobDate, card);
+          if (dateElement) {
+            const datetime = dateElement.getAttribute('datetime');
+            if (datetime) {
+              try {
+                const date = new Date(datetime);
+                const now = new Date();
+                const diffDays = Math.floor((now - date) / (1000 * 60 * 60 * 24));
+                if (diffDays === 0) datePosted = 'Today';
+                else if (diffDays === 1) datePosted = '1 day ago';
+                else if (diffDays < 7) datePosted = `${diffDays} days ago`;
+                else if (diffDays < 30) datePosted = `${Math.floor(diffDays / 7)} weeks ago`;
+                else datePosted = `${Math.floor(diffDays / 30)} months ago`;
+              } catch (e) {
+                const text = dateElement.textContent?.trim();
+                if (text && isValidDateText(text)) {
+                  datePosted = text;
+                }
+              }
+            } else {
+              const text = dateElement.textContent?.trim();
+              if (text && isValidDateText(text)) {
+                datePosted = text;
+              }
+            }
+          }
+          
+          // Fallback: search all time elements in card
+          if (datePosted === 'Unknown') {
+            const timeElements = card.querySelectorAll('time[datetime]');
+            for (const timeEl of timeElements) {
+              const datetime = timeEl.getAttribute('datetime');
+              if (datetime) {
+                try {
+                  const date = new Date(datetime);
+                  const now = new Date();
+                  const diffDays = Math.floor((now - date) / (1000 * 60 * 60 * 24));
+                  if (diffDays === 0) datePosted = 'Today';
+                  else if (diffDays === 1) datePosted = '1 day ago';
+                  else if (diffDays < 7) datePosted = `${diffDays} days ago`;
+                  else if (diffDays < 30) datePosted = `${Math.floor(diffDays / 7)} weeks ago`;
+                  else datePosted = `${Math.floor(diffDays / 30)} months ago`;
+                  break;
+                } catch (e) {
+                  const text = timeEl.textContent?.trim();
+                  if (text && isValidDateText(text)) {
+                    datePosted = text;
+                    break;
+                  }
+                }
+              } else {
+                const text = timeEl.textContent?.trim();
+                if (text && isValidDateText(text)) {
+                  datePosted = text;
+                  break;
+                }
+              }
+            }
+          }
+          
           jobLinks.push({
             link: constructedLink,
             url: constructedLink,
@@ -220,7 +313,7 @@ async function scrapeJobs(onlyNew = true, lastSeenIds = [], pageIndex = 0) {
             title,
             company: findElement(SELECTORS.jobCompany, card)?.textContent?.trim() || 'Unknown',
             location: findElement(SELECTORS.jobLocation, card)?.textContent?.trim() || 'Unknown',
-            datePosted: findElement(SELECTORS.jobDate, card)?.textContent?.trim() || 'Unknown'
+            datePosted: datePosted
           });
         }
         continue;
@@ -357,10 +450,37 @@ async function scrapeJobs(onlyNew = true, lastSeenIds = [], pageIndex = 0) {
       // Try multiple methods to extract date
       let datePosted = 'Unknown';
       
+      // Helper function to validate if text looks like a date (not location)
+      const isValidDateText = (text) => {
+        if (!text || text.length === 0) return false;
+        
+        // Must contain date-related keywords
+        const hasDateKeywords = text.match(/\b(ago|day|days|week|weeks|month|months|hour|hours|minute|minutes|today|yesterday|just|now|posted|active)\b/i);
+        if (!hasDateKeywords) return false;
+        
+        // Must match date patterns
+        const isDatePattern = text.match(/(\d+\s+(day|week|month|hour|minute)s?\s+ago|Just\s+now|Today|Yesterday|\d+d\s+ago|\d+w\s+ago|\d+m\s+ago|Posted\s+\d+)/i);
+        if (!isDatePattern) return false;
+        
+        // Exclude obvious location patterns
+        const isLocationPattern = text.match(/(Remote|On-site|Hybrid|United States|USA|Canada|UK|Europe|Asia|Australia|Germany|France|Spain|Italy|New York|San Francisco|Los Angeles|Chicago|Boston|Seattle|Austin|Denver|Atlanta|London|Toronto|Vancouver|Sydney|Melbourne)/i);
+        if (isLocationPattern) return false;
+        
+        // Exclude city, state patterns (e.g., "San Francisco, CA")
+        const isCityStatePattern = text.match(/^[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?,\s*[A-Z]{2}$/);
+        if (isCityStatePattern) return false;
+        
+        // Exclude if it contains common location keywords
+        const hasLocationKeywords = text.match(/\b(location|city|state|country|address|place|area|region|zone)\b/i);
+        if (hasLocationKeywords) return false;
+        
+        return true;
+      };
+      
       // First, try all date selectors
       const dateElement = findElement(SELECTORS.jobDate, card);
       if (dateElement) {
-        let dateText = dateElement.textContent.trim();
+        let dateText = dateElement.textContent?.trim() || '';
         // Try to get datetime attribute if it's a time element
         const datetime = dateElement.getAttribute('datetime');
         if (datetime) {
@@ -374,11 +494,21 @@ async function scrapeJobs(onlyNew = true, lastSeenIds = [], pageIndex = 0) {
             else if (diffDays < 30) datePosted = `${Math.floor(diffDays / 7)} weeks ago`;
             else datePosted = `${Math.floor(diffDays / 30)} months ago`;
           } catch (e) {
-            // Fall back to text content
-            if (dateText) datePosted = dateText;
+            // Fall back to text content - only accept if it's a valid date
+            if (dateText) {
+              dateText = dateText.replace(/\s+/g, ' ').trim();
+              if (isValidDateText(dateText)) {
+                datePosted = dateText;
+              }
+            }
           }
         } else if (dateText) {
-          datePosted = dateText;
+          // Clean up the text - remove extra whitespace
+          dateText = dateText.replace(/\s+/g, ' ').trim();
+          // Only accept if it's a valid date pattern
+          if (isValidDateText(dateText)) {
+            datePosted = dateText;
+          }
         }
       }
       
@@ -399,12 +529,31 @@ async function scrapeJobs(onlyNew = true, lastSeenIds = [], pageIndex = 0) {
               else datePosted = `${Math.floor(diffDays / 30)} months ago`;
               break;
             } catch (e) {
-              const text = timeEl.textContent.trim();
-              if (text) {
+              const text = timeEl.textContent?.trim();
+              if (text && isValidDateText(text)) {
                 datePosted = text;
                 break;
               }
             }
+          } else {
+            // Even without datetime, check text content but validate it
+            const text = timeEl.textContent?.trim();
+            if (text && isValidDateText(text)) {
+              datePosted = text;
+              break;
+            }
+          }
+        }
+      }
+      
+      // Also try all time elements without datetime attribute
+      if (datePosted === 'Unknown') {
+        const allTimeElements = card.querySelectorAll('time');
+        for (const timeEl of allTimeElements) {
+          const text = timeEl.textContent?.trim();
+          if (text && isValidDateText(text)) {
+            datePosted = text;
+            break;
           }
         }
       }
@@ -436,14 +585,34 @@ async function scrapeJobs(onlyNew = true, lastSeenIds = [], pageIndex = 0) {
       
       // If still unknown, look through all metadata elements
       if (datePosted === 'Unknown') {
-        const metadataElements = card.querySelectorAll('.job-search-card__metadata-item, .base-search-card__metadata, .job-card-container__metadata-item, li, span');
+        const metadataElements = card.querySelectorAll('.job-search-card__metadata-item, .base-search-card__metadata, .job-card-container__metadata-item, .base-search-card__metadata-item, li, span');
         for (const el of metadataElements) {
-          const text = el.textContent.trim();
+          const text = el.textContent?.trim();
           if (!text || text.length > 50) continue;
           
-          // Check if it looks like a date
-          if (text.match(/(\d+\s+(day|week|month)s?\s+ago|Just\s+now|Today|Yesterday|\d+d\s+ago|\d+w\s+ago)/i)) {
+          // Check if it looks like a date and is not a location
+          if (isValidDateText(text)) {
             datePosted = text;
+            break;
+          }
+        }
+      }
+      
+      // Last resort: search through all text in the card for date patterns
+      if (datePosted === 'Unknown') {
+        const cardText = card.textContent || card.innerText || '';
+        // Look for date patterns anywhere in the card
+        const datePatterns = [
+          /(\d+\s+(day|week|month|hour|minute)s?\s+ago)/i,
+          /(Just\s+now|Today|Yesterday)/i,
+          /(Posted\s+(\d+\s+(day|week|month)s?\s+ago))/i,
+          /(Posted\s+(Just\s+now|Today|Yesterday))/i,
+          /(\d+d\s+ago|\d+w\s+ago|\d+m\s+ago)/i
+        ];
+        for (const pattern of datePatterns) {
+          const match = cardText.match(pattern);
+          if (match) {
+            datePosted = match[1] || match[0];
             break;
           }
         }
@@ -556,6 +725,23 @@ async function scrapeJobs(onlyNew = true, lastSeenIds = [], pageIndex = 0) {
         }
       }
       
+      // Debug logging for date extraction
+      if (datePosted === 'Unknown') {
+        console.log('Date extraction failed for job:', {
+          title,
+          cardHTML: card.innerHTML.substring(0, 500),
+          timeElements: Array.from(card.querySelectorAll('time')).map(el => ({
+            text: el.textContent?.trim(),
+            datetime: el.getAttribute('datetime'),
+            classes: el.className
+          })),
+          metadataElements: Array.from(card.querySelectorAll('.base-search-card__metadata-item, .job-search-card__metadata-item')).map(el => ({
+            text: el.textContent?.trim(),
+            classes: el.className
+          }))
+        });
+      }
+      
       // Create job data object with final extracted values
       const jobData = {
         link: jobLink,
@@ -573,79 +759,37 @@ async function scrapeJobs(onlyNew = true, lastSeenIds = [], pageIndex = 0) {
     }
   }
   
-  // For each job, navigate to detail page and extract full description
-  // Note: We'll extract from detail pages, but this requires navigation
-  // For now, let's improve the card extraction and use detail page as fallback
+  // Add jobs without fetching descriptions (to avoid opening tabs during scanning)
+  // Descriptions will be fetched on-demand when user clicks "Fetch description"
   for (const jobInfo of jobLinks) {
-    try {
-      // Try to get data from detail page
-      const result = await getJobDescription(jobInfo.link);
-      
-      // Use extracted data from detail page, prioritizing detail page data
-      let finalTitle = jobInfo.title;
-      let finalCompany = jobInfo.company;
-      let finalLocation = jobInfo.location;
-      let finalDate = jobInfo.datePosted;
-      
-      if (result.extractors) {
-        // Always prefer detail page data if available
-        const detailTitle = result.extractors.getTitle();
-        const detailCompany = result.extractors.getCompany();
-        const detailLocation = result.extractors.getLocation();
-        const detailDate = result.extractors.getDate();
-        
-        if (detailTitle) {
-          finalTitle = detailTitle;
-        }
-        if (detailCompany) {
-          finalCompany = detailCompany;
-        }
-        if (detailLocation) {
-          finalLocation = detailLocation;
-        }
-        if (detailDate) {
-          finalDate = detailDate;
-        }
-      }
-      
-      const descriptionHtml = result.descriptionHtml || '';
-      const finalJobInfo = {
-        ...jobInfo,
-        url: jobInfo.url || jobInfo.link,
-        title: finalTitle || jobInfo.title || 'Unknown',
-        descriptionHtml,
-        needsFetch: !descriptionHtml,
-        scrapedAt: Date.now(),
-        company: finalCompany || 'Unknown',
-        location: finalLocation || 'Unknown',
-        datePosted: finalDate || 'Unknown'
-      };
-      
-      // Debug logging for final data
-      console.log('Job extracted:', {
+    // Ensure datePosted is properly set
+    let finalDatePosted = jobInfo.datePosted || 'Unknown';
+    if (finalDatePosted === 'Unknown' || !finalDatePosted || finalDatePosted.trim() === '') {
+      finalDatePosted = 'Unknown';
+    }
+    
+    const finalJobInfo = {
+      ...jobInfo,
+      url: jobInfo.url || jobInfo.link,
+      title: jobInfo.title || 'Unknown',
+      company: jobInfo.company || 'Unknown',
+      location: jobInfo.location || 'Unknown',
+      datePosted: finalDatePosted,
+      descriptionHtml: '',
+      needsFetch: true,
+      scrapedAt: Date.now()
+    };
+    
+    // Debug: log if date is still Unknown
+    if (finalJobInfo.datePosted === 'Unknown') {
+      console.warn('Job added with Unknown date:', {
         title: finalJobInfo.title,
         company: finalJobInfo.company,
-        location: finalJobInfo.location,
-        datePosted: finalJobInfo.datePosted,
-        hasDescription: !!finalJobInfo.descriptionHtml,
-        descriptionLength: finalJobInfo.descriptionHtml?.length || 0
-      });
-      
-      jobs.push(finalJobInfo);
-      
-      // Random delay between job fetches
-      await sleep(randomDelay(2000, 4000));
-    } catch (error) {
-      console.error(`Error fetching description for ${jobInfo.link}:`, error);
-      // Still add job with whatever data we have
-      jobs.push({
-        ...jobInfo,
-        url: jobInfo.url || jobInfo.link,
-        descriptionHtml: '',
-        needsFetch: true,
-        scrapedAt: Date.now()
+        url: finalJobInfo.url
       });
     }
+    
+    jobs.push(finalJobInfo);
   }
   
   return jobs;

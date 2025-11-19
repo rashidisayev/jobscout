@@ -822,8 +822,16 @@ function extractDescriptionFromLivePage() {
     ],
     jobDetailDate: [
       '.jobs-details-top-card__job-insight',
+      '.jobs-details-top-card__job-insight-text-item',
       'span[data-testid="job-posted-date"]',
-      'time[datetime]'
+      'time[datetime]',
+      '.jobs-details-top-card__primary-description time',
+      '.jobs-details-top-card__primary-description-without-tagline time',
+      'li[data-testid="job-posted-date"]',
+      '[class*="job-insight"] time',
+      '[class*="posted-date"]',
+      '.jobs-details-top-card__primary-description li:last-child',
+      '.jobs-details-top-card__primary-description-without-tagline li:last-child'
     ]
   };
   
@@ -864,9 +872,11 @@ function extractDescriptionFromLivePage() {
   };
   
   const getDate = () => {
+    // First try all date selectors
     for (const selector of SELECTORS.jobDetailDate) {
       const el = document.querySelector(selector);
       if (el) {
+        const text = el.textContent?.trim();
         const datetime = el.getAttribute('datetime');
         if (datetime) {
           try {
@@ -878,14 +888,74 @@ function extractDescriptionFromLivePage() {
             else if (diffDays < 7) return `${diffDays} days ago`;
             else if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
             else return `${Math.floor(diffDays / 30)} months ago`;
-          } catch (e) {}
+          } catch (e) {
+            if (text && text.match(/(\d+\s+(day|week|month)s?\s+ago|Just\s+now|Today|Yesterday)/i)) {
+              return text;
+            }
+          }
         }
-        const text = el.textContent?.trim();
-        if (text && text.match(/(\d+\s+(day|week|month)s?\s+ago|Today|Yesterday)/i)) {
+        if (text && text.match(/(\d+\s+(day|week|month)s?\s+ago|Just\s+now|Today|Yesterday)/i)) {
           return text;
         }
       }
     }
+    
+    // Fallback: look for all time elements with datetime
+    const timeElements = document.querySelectorAll('time[datetime]');
+    for (const el of timeElements) {
+      const datetime = el.getAttribute('datetime');
+      if (datetime) {
+        try {
+          const date = new Date(datetime);
+          const now = new Date();
+          const diffDays = Math.floor((now - date) / (1000 * 60 * 60 * 24));
+          if (diffDays === 0) return 'Today';
+          else if (diffDays === 1) return '1 day ago';
+          else if (diffDays < 7) return `${diffDays} days ago`;
+          else if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
+          else return `${Math.floor(diffDays / 30)} months ago`;
+        } catch (e) {
+          const text = el.textContent?.trim();
+          if (text) return text;
+        }
+      }
+    }
+    
+    // Fallback: look for all time elements (even without datetime)
+    const allTimeElements = document.querySelectorAll('time');
+    for (const el of allTimeElements) {
+      const text = el.textContent?.trim();
+      if (text && text.match(/(\d+\s+(day|week|month)s?\s+ago|Just\s+now|Today|Yesterday)/i)) {
+        return text;
+      }
+    }
+    
+    // Fallback: look for date patterns in page text
+    const pageText = document.body?.textContent || '';
+    const datePatterns = [
+      /(\d+\s+(day|week|month|hour|minute)s?\s+ago)/i,
+      /(Just\s+now|Today|Yesterday)/i,
+      /(Posted\s+(\d+\s+(day|week|month)s?\s+ago))/i,
+      /(Posted\s+(Just\s+now|Today|Yesterday))/i,
+      /(\d+d\s+ago|\d+w\s+ago|\d+m\s+ago)/i,
+      /(Active\s+(\d+\s+(day|week|month)s?\s+ago))/i
+    ];
+    for (const pattern of datePatterns) {
+      const match = pageText.match(pattern);
+      if (match) {
+        return match[1] || match[0];
+      }
+    }
+    
+    // Last fallback: look through all job insight elements
+    const insightElements = document.querySelectorAll('.jobs-details-top-card__job-insight, .jobs-details-top-card__job-insight-text-item, li');
+    for (const el of insightElements) {
+      const text = el.textContent?.trim();
+      if (text && text.match(/(\d+\s+(day|week|month)s?\s+ago|Just\s+now|Today|Yesterday)/i)) {
+        return text;
+      }
+    }
+    
     return null;
   };
   
