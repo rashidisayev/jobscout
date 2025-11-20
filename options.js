@@ -269,6 +269,7 @@ async function handleResumeUpload(event, index) {
   
   try {
     const parserModule = await import('./scripts/parser.js');
+    const cvParserModule = await import('./scripts/cvParser.js');
     const text = await parserModule.parseResume(file);
     
     if (!text || text.trim().length === 0) {
@@ -279,13 +280,19 @@ async function handleResumeUpload(event, index) {
       throw new Error('Extracted text is too short. The file may not contain readable text or may be corrupted.');
     }
     
+    // Parse CV sections
+    const cvId = `cv-${file.name}-${Date.now()}`;
+    const cvDoc = cvParserModule.createCvDoc(cvId, file.name, text);
+    
     const settings = await chrome.storage.local.get(['resumes']);
     const resumes = settings.resumes || [];
     
     resumes[index] = {
+      id: cvDoc.id,
       filename: file.name,
       size: file.size,
       text: text,
+      sections: cvDoc.sections,
       wordCount: text.split(/\s+/).filter(word => word.length > 0).length,
       updatedAt: Date.now()
     };
@@ -472,7 +479,38 @@ function displayResults(jobs) {
     dateCell.textContent = job.datePosted && job.datePosted !== 'Unknown' ? job.datePosted : 'N/A';
     
     const resumeCell = document.createElement('td');
-    resumeCell.textContent = job.bestResume || 'N/A';
+    const bestMatch = job.bestMatch || (job.bestResume ? { cvName: job.bestResume, score: job.matchScore ?? job.score } : null);
+    if (bestMatch) {
+      const resumeContainer = document.createElement('div');
+      resumeContainer.style.display = 'flex';
+      resumeContainer.style.alignItems = 'center';
+      resumeContainer.style.gap = '8px';
+      
+      const resumeName = document.createElement('span');
+      resumeName.textContent = bestMatch.cvName || job.bestResume || 'N/A';
+      resumeContainer.appendChild(resumeName);
+      
+      // Score badge
+      const scoreValue = bestMatch.score ?? job.matchScore ?? job.score;
+      if (scoreValue !== undefined && scoreValue !== null) {
+        const scorePercent = scoreValue * 100;
+        const scoreColor = getScoreColor(scorePercent);
+        const badge = document.createElement('span');
+        badge.className = 'score-badge';
+        badge.textContent = scorePercent.toFixed(0) + '%';
+        badge.style.backgroundColor = scoreColor.bg;
+        badge.style.color = scoreColor.text;
+        badge.style.padding = '2px 6px';
+        badge.style.borderRadius = '3px';
+        badge.style.fontSize = '11px';
+        badge.style.fontWeight = 'bold';
+        resumeContainer.appendChild(badge);
+      }
+      
+      resumeCell.appendChild(resumeContainer);
+    } else {
+      resumeCell.textContent = 'N/A';
+    }
     
     const scoreCell = document.createElement('td');
     const scoreValue = job.matchScore ?? job.score;
@@ -495,6 +533,8 @@ function displayResults(jobs) {
     const actionsCell = document.createElement('td');
     const actions = document.createElement('div');
     actions.className = 'job-actions';
+    actions.style.display = 'flex';
+    actions.style.gap = '8px';
     
     const descBtn = document.createElement('button');
     descBtn.textContent = 'See description';
@@ -506,6 +546,17 @@ function displayResults(jobs) {
     }
     
     actions.append(descBtn);
+    
+    // Add "Why?" button if we have match explanation
+    if (bestMatch && bestMatch.explanation) {
+      const whyBtn = document.createElement('button');
+      whyBtn.textContent = 'Why?';
+      whyBtn.className = 'btn btn-secondary';
+      whyBtn.style.fontSize = '12px';
+      whyBtn.addEventListener('click', () => showMatchExplanation(job, bestMatch));
+      actions.append(whyBtn);
+    }
+    
     actionsCell.appendChild(actions);
     
     row.append(
@@ -1374,6 +1425,94 @@ function showScoreInfoModal() {
   
   // Close handlers
   const closeBtn = document.getElementById('closeScoreModal');
+  closeBtn.addEventListener('click', () => {
+    document.body.removeChild(modal);
+  });
+  
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) {
+      document.body.removeChild(modal);
+    }
+  });
+  
+  // Close on Escape key
+  const escapeHandler = (e) => {
+    if (e.key === 'Escape') {
+      document.body.removeChild(modal);
+      document.removeEventListener('keydown', escapeHandler);
+    }
+  };
+  document.addEventListener('keydown', escapeHandler);
+}
+
+function showMatchExplanation(job, match) {
+  const explanation = match.explanation || {};
+  
+  // Create modal overlay
+  const modal = document.createElement('div');
+  modal.className = 'score-info-modal';
+  modal.style.zIndex = '10001';
+  
+  const matchedKeywords = explanation.matchedKeywords || [];
+  const missingMustHaves = explanation.missingMustHaves || [];
+  const topSentences = explanation.topSentences || [];
+  
+  modal.innerHTML = `
+    <div class="score-info-modal-content" style="max-width: 600px;">
+      <div class="score-info-modal-header">
+        <h3>Why ${match.cvName || 'this resume'}?</h3>
+        <button class="score-info-modal-close" id="closeWhyModal">&times;</button>
+      </div>
+      <div class="score-info-modal-body" style="text-align: left;">
+        <div style="margin-bottom: 20px;">
+          <h4 style="margin-bottom: 8px; color: #333;">Matched Keywords</h4>
+          <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+            ${matchedKeywords.length > 0 
+              ? matchedKeywords.map(kw => `<span style="background: #e3f2fd; padding: 4px 8px; border-radius: 4px; font-size: 12px;">${kw}</span>`).join('')
+              : '<span style="color: #666;">No significant keywords matched</span>'
+            }
+          </div>
+        </div>
+        
+        ${missingMustHaves.length > 0 ? `
+        <div style="margin-bottom: 20px;">
+          <h4 style="margin-bottom: 8px; color: #d32f2f;">Missing Must-Haves</h4>
+          <ul style="margin: 0; padding-left: 20px; color: #d32f2f;">
+            ${missingMustHaves.map(req => `<li>${req}</li>`).join('')}
+          </ul>
+        </div>
+        ` : `
+        <div style="margin-bottom: 20px;">
+          <h4 style="margin-bottom: 8px; color: #2e7d32;">✓ All Must-Haves Satisfied</h4>
+        </div>
+        `}
+        
+        ${topSentences.length > 0 ? `
+        <div style="margin-bottom: 20px;">
+          <h4 style="margin-bottom: 8px; color: #333;">Most Similar Content</h4>
+          <div style="display: flex; flex-direction: column; gap: 10px;">
+            ${topSentences.map((sent, idx) => `
+              <div style="background: #f5f5f5; padding: 10px; border-radius: 4px; border-left: 3px solid #2196f3;">
+                <div style="font-size: 12px; color: #666; margin-bottom: 4px;">Relevance: ${(sent.score * 100).toFixed(0)}%</div>
+                <div style="font-size: 13px; color: #333;">${sent.text}</div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+        ` : ''}
+        
+        <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #ddd; font-size: 12px; color: #666;">
+          <strong>Job:</strong> ${job.title || 'N/A'} at ${job.company || 'N/A'}<br>
+          <strong>Score:</strong> ${((match.score || 0) * 100).toFixed(1)}%
+        </div>
+      </div>
+    </div>
+  `;
+  
+  document.body.appendChild(modal);
+  
+  // Close handlers
+  const closeBtn = document.getElementById('closeWhyModal');
   closeBtn.addEventListener('click', () => {
     document.body.removeChild(modal);
   });

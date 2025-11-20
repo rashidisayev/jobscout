@@ -1,6 +1,30 @@
 // Background service worker for JobScout
 // Handles alarms, scanning, and badge updates
 
+// Import matching modules (dynamic imports to avoid service worker issues)
+let cvParserModule = null;
+let mustHaveExtractorModule = null;
+let matchingEngineModule = null;
+let embeddingsModule = null;
+
+async function loadMatchingModules() {
+  if (cvParserModule && mustHaveExtractorModule && matchingEngineModule && embeddingsModule) {
+    return;
+  }
+  
+  try {
+    cvParserModule = await import('./scripts/cvParser.js');
+    mustHaveExtractorModule = await import('./scripts/mustHaveExtractor.js');
+    matchingEngineModule = await import('./scripts/matchingEngine.js');
+    embeddingsModule = await import('./scripts/embeddings.js');
+    
+    // Initialize embeddings
+    await embeddingsModule.initializeEmbeddings();
+  } catch (error) {
+    console.error('Failed to load matching modules:', error);
+  }
+}
+
 const DEFAULT_SETTINGS = {
   searchUrls: [],
   scanInterval: 60, // minutes
@@ -398,20 +422,164 @@ async function enrichJobMatchData(job, resumes) {
     enrichedJob.matchScore = 0;
     enrichedJob.topKeywords = [];
     enrichedJob.score = 0;
+    enrichedJob.matches = [];
+    enrichedJob.bestMatch = null;
     return enrichedJob;
   }
   
+  // Load matching modules
+  await loadMatchingModules();
+  
+  if (!cvParserModule || !mustHaveExtractorModule || !matchingEngineModule) {
+    // Fallback to old matching if modules not loaded
+    return await enrichJobMatchDataLegacy(job, resumes);
+  }
+  
+  try {
+    const textToMatch = getTextForMatching(job);
+    
+    // Extract must-haves from job description
+    const mustHaves = mustHaveExtractorModule.extractMustHaves(textToMatch);
+    
+    // Convert resumes to structured CV format
+    const cvDocs = await convertResumesToCvDocs(resumes);
+    
+    // Get or compute job embedding
+    const jobEmbedding = await getOrComputeEmbedding(textToMatch, 'job', job.id);
+    
+    // Match against all CVs
+    const matches = [];
+    const embeddingCache = new embeddingsModule.EmbeddingCache();
+    
+    for (const cvDoc of cvDocs) {
+      // Get or compute CV embedding
+      const cvEmbedding = await getOrComputeEmbedding(cvDoc.text, 'cv', cvDoc.id, embeddingCache);
+      
+      // Run hybrid matching
+      const matchResult = await matchingEngineModule.matchJobToCv(
+        textToMatch,
+        cvDoc,
+        mustHaves,
+        jobEmbedding,
+        cvEmbedding
+      );
+      
+      matches.push({
+        cvId: cvDoc.id,
+        cvName: cvDoc.name,
+        score: matchResult.score,
+        explanation: matchResult.explanation
+      });
+    }
+    
+    // Sort by score and find best match
+    matches.sort((a, b) => b.score - a.score);
+    const bestMatch = matches.length > 0 ? matches[0] : null;
+    
+    // Store results
+    enrichedJob.matches = matches;
+    enrichedJob.bestMatch = bestMatch;
+    enrichedJob.bestResume = bestMatch ? bestMatch.cvName : null;
+    enrichedJob.matchScore = bestMatch ? bestMatch.score : 0;
+    enrichedJob.topKeywords = bestMatch ? bestMatch.explanation.matchedKeywords : [];
+    enrichedJob.score = enrichedJob.matchScore;
+    
+    return enrichedJob;
+  } catch (error) {
+    console.error('Error in hybrid matching, falling back to legacy:', error);
+    return await enrichJobMatchDataLegacy(job, resumes);
+  }
+}
+
+// Legacy matching function (fallback)
+async function enrichJobMatchDataLegacy(job, resumes) {
+  const enrichedJob = { ...job };
   const textToMatch = getTextForMatching(job);
   const jobTitle = job.title || '';
   const match = await matchResumeToJob(textToMatch, resumes, jobTitle);
   
-  // If match score is below threshold, mark as low relevance
   enrichedJob.bestResume = match.filename || null;
   enrichedJob.matchScore = match.score !== undefined && match.score !== null ? match.score : 0;
   enrichedJob.topKeywords = match.topKeywords || [];
   enrichedJob.score = enrichedJob.matchScore;
+  enrichedJob.matches = [];
+  enrichedJob.bestMatch = null;
   
   return enrichedJob;
+}
+
+// Convert resume objects to structured CV documents
+async function convertResumesToCvDocs(resumes) {
+  await loadMatchingModules();
+  if (!cvParserModule) return [];
+  
+  const cvDocs = [];
+  
+  for (const resume of resumes) {
+    if (!resume || !resume.filename || !resume.text) continue;
+    
+    // Check if already structured
+    if (resume.sections) {
+      cvDocs.push({
+        id: resume.id || `cv-${resume.filename}`,
+        name: resume.filename,
+        text: resume.text,
+        sections: resume.sections,
+        embedding: resume.embedding,
+        updatedAt: resume.updatedAt || Date.now()
+      });
+    } else {
+      // Parse and structure
+      const cvDoc = cvParserModule.createCvDoc(
+        resume.id || `cv-${resume.filename}`,
+        resume.filename,
+        resume.text
+      );
+      cvDocs.push(cvDoc);
+      
+      // Update resume in storage with structured data
+      resume.sections = cvDoc.sections;
+      resume.id = cvDoc.id;
+    }
+  }
+  
+  // Save updated resumes back to storage
+  if (cvDocs.length > 0) {
+    const settings = await chrome.storage.local.get(['resumes']);
+    const updatedResumes = settings.resumes || [];
+    for (let i = 0; i < updatedResumes.length; i++) {
+      const cvDoc = cvDocs.find(cv => cv.name === updatedResumes[i].filename);
+      if (cvDoc) {
+        updatedResumes[i].sections = cvDoc.sections;
+        updatedResumes[i].id = cvDoc.id;
+      }
+    }
+    await chrome.storage.local.set({ resumes: updatedResumes });
+  }
+  
+  return cvDocs;
+}
+
+// Embedding cache per job/CV
+const embeddingCacheMap = new Map();
+
+async function getOrComputeEmbedding(text, type, id, cache = null) {
+  if (!embeddingsModule) return null;
+  
+  const cacheKey = `${type}-${id}`;
+  const localCache = cache || embeddingCacheMap.get(cacheKey) || new embeddingsModule.EmbeddingCache();
+  
+  if (localCache.has(text)) {
+    return localCache.get(text);
+  }
+  
+  const embedding = await embeddingsModule.embed(text, localCache);
+  
+  if (!cache) {
+    embeddingCacheMap.set(cacheKey, localCache);
+  }
+  
+  return embedding;
 }
 
 function mergeJobRecords(existingJob, incomingJob, { forceRescan = false } = {}) {

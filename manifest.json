@@ -43,7 +43,13 @@
         "vendor/pdfjs/pdf.mjs",
         "vendor/pdfjs/pdf.worker.mjs",
         "vendor/pdfjs/*.map",
-        "scripts/utils.js"
+        "scripts/utils.js",
+        "scripts/cvParser.js",
+        "scripts/mustHaveExtractor.js",
+        "scripts/matchingEngine.js",
+        "scripts/embeddings.js",
+        "vendor/onnx/*.onnx",
+        "vendor/onnx/*.wasm"
       ],
       "matches": ["https://www.linkedin.com/*"]
     }

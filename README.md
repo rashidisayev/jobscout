@@ -102,6 +102,71 @@ You can create these using any image editor, or use online tools like [Favicon G
    - Duplicate jobs are automatically filtered out
    - Only new jobs since the last scan are shown (if enabled)
 
+## 🔍 Matching Engine (How JobScout picks the best resume)
+
+JobScout uses a **hybrid matcher** to compare each Job Description (JD) with your uploaded resumes:
+
+### Must-Have Filter
+Pulls out hard requirements (skills, language, location, clearance). If a resume misses any must-have, its score is capped (≤0.35).
+
+### Sparse Match
+**BM25/TF-IDF** for exact terminology overlap. This catches specific technical terms, tools, and skills mentioned in both the job description and your resume.
+
+### Dense Match
+**Semantic similarity** with compact ONNX sentence embeddings run in your browser. This understands meaning beyond exact word matches - e.g., "React" and "React.js" are recognized as similar.
+
+### Section Weights
+Different parts of your resume are weighted differently:
+- **Experience** (0.45) - Most important, with recency boost:
+  - Recent roles (≤2 years): 1.0x multiplier
+  - Mid-career (2-5 years): 0.7x multiplier
+  - Older experience (>5 years): 0.4x multiplier
+- **Skills** (0.25) - Technical competencies
+- **Projects** (0.15) - Portfolio work
+- **Education/Location** (0.15) - Background info
+
+### (Optional) Reranker
+A small cross-encoder polishes the top results for extra precision. Enable in Options if you need the highest accuracy (note: uses more compute).
+
+### Final Score
+The hybrid score combines:
+- 35% Dense (semantic) similarity
+- 25% Sparse (BM25) similarity
+- 40% Section-aware weighted score
+
+Final score is normalized to 0–1 and color-coded:
+
+- **≥ 0.70** Excellent (green) - Very similar content
+- **0.50–0.69** Good (teal) - Strong overlap
+- **0.30–0.49** Moderate (amber) - Relevant but not perfect
+- **0.10–0.29** Weak (orange) - Some common terms
+- **< 0.10** Very poor (red) - Different fields/skills
+
+### Understanding Match Results
+
+Click **"Why?"** next to any score to see:
+- **Matched Keywords**: Top 10 terms that appeared in both JD and resume
+- **Missing Must-Haves**: Required skills/requirements not found in your resume
+- **Most Similar Content**: Top 2-3 sentences from your resume that best match the job description
+
+### Privacy
+
+All parsing, embeddings, and scoring happen **locally in your browser**. No external servers. Your resume data never leaves your device.
+
+### Performance Tips
+
+- **Keep 3–5 resumes uploaded** for best results
+- **Enable the reranker only if you need extra precision** (it's slower)
+- **Scores are cached per job**; re-runs only update new/changed items
+- **Embeddings are pre-computed** when you upload resumes for faster matching
+
+### Dev Notes
+
+- Uses **onnxruntime-web** for in-browser inference
+- **BM25** via a lightweight JS implementation
+- Model files are lazy-loaded and cached; see `/vendor/onnx/README.md` for setup instructions
+- Falls back to TF-IDF-based pseudo-embeddings if ONNX models aren't available
+
 ## Privacy & Terms of Service
 
 **Important**: JobScout is designed to respect LinkedIn's Terms of Service:
