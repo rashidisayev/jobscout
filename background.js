@@ -359,6 +359,18 @@ async function handleJobResults(jobs = [], options = {}) {
     
     if (!idToIndex.has(jobId)) {
       const enriched = await enrichJobMatchData(incomingRecord, validResumes);
+      
+      // Filter out jobs with very low scores (below 5% threshold)
+      const MIN_SCORE_THRESHOLD = 0.05;
+      if (validResumes.length > 0 && enriched.matchScore < MIN_SCORE_THRESHOLD) {
+        console.log(`Excluding job "${enriched.title}" - score ${enriched.matchScore.toFixed(4)} below threshold ${MIN_SCORE_THRESHOLD}`);
+        // Mark as excluded but don't add to jobs list
+        enriched.excluded = true;
+        enriched.exclusionReason = 'Score too low';
+        // Still count it but mark as excluded
+        continue;
+      }
+      
       mergedJobs.push(enriched);
       idToIndex.set(jobId, mergedJobs.length - 1);
       lastSeenSet.add(jobId);
@@ -379,14 +391,48 @@ async function handleJobResults(jobs = [], options = {}) {
     
     if (shouldRecalculate) {
       const updated = await enrichJobMatchData(mergedRecord, validResumes);
+      
+      // Filter out jobs with very low scores (below 5% threshold)
+      const MIN_SCORE_THRESHOLD = 0.05;
+      if (validResumes.length > 0 && updated.matchScore < MIN_SCORE_THRESHOLD) {
+        console.log(`Excluding existing job "${updated.title}" - score ${updated.matchScore.toFixed(4)} below threshold ${MIN_SCORE_THRESHOLD}`);
+        // Mark as excluded and remove from list
+        updated.excluded = true;
+        updated.exclusionReason = 'Score too low';
+        mergedJobs.splice(existingIndex, 1);
+        // Rebuild idToIndex after removal
+        idToIndex.clear();
+        mergedJobs.forEach((job, idx) => {
+          const jId = job?.id || (job?.url ? hashJobUrl(job.url) : null);
+          if (jId) idToIndex.set(jId, idx);
+        });
+        continue;
+      }
+      
       mergedJobs[existingIndex] = updated;
     } else {
       mergedJobs[existingIndex] = mergedRecord;
     }
   }
   
+  // Clean up: Remove any existing jobs that are now excluded (score too low)
+  const MIN_SCORE_THRESHOLD = 0.05;
+  const cleanedJobs = mergedJobs.filter(job => {
+    // Remove jobs marked as excluded
+    if (job.excluded) {
+      return false;
+    }
+    // Remove jobs with 0% score that have been matched (have bestResume field)
+    const score = job.matchScore ?? job.score ?? 0;
+    if (score === 0 && 'bestResume' in job && validResumes.length > 0) {
+      console.log(`Removing existing job "${job.title}" - 0% score`);
+      return false;
+    }
+    return true;
+  });
+  
   await chrome.storage.local.set({
-    jobs: mergedJobs,
+    jobs: cleanedJobs,
     lastSeenJobIds: Array.from(lastSeenSet)
   });
   
@@ -450,10 +496,29 @@ async function enrichJobMatchDataLegacy(job, resumes) {
     enrichedJob.score = 0;
     enrichedJob.matches = [];
     enrichedJob.bestMatch = null;
+    // Mark as excluded if we have resumes but description is too short
+    if (resumes.length > 0) {
+      enrichedJob.excluded = true;
+      enrichedJob.exclusionReason = 'Description too short';
+    }
     return enrichedJob;
   }
   
   const match = await matchResumeToJob(textToMatch, resumes, jobTitle);
+  
+  // If no match found (score below threshold), mark as excluded
+  if (!match.filename && resumes.length > 0) {
+    enrichedJob.bestResume = null;
+    enrichedJob.matchScore = 0;
+    enrichedJob.topKeywords = [];
+    enrichedJob.score = 0;
+    enrichedJob.matches = [];
+    enrichedJob.bestMatch = null;
+    enrichedJob.excluded = true;
+    enrichedJob.exclusionReason = 'Score below threshold';
+    console.log(`Job "${job.title}" excluded - no match found or score too low`);
+    return enrichedJob;
+  }
   
   // Create match structure compatible with new system
   const bestMatch = match.filename ? {
@@ -473,6 +538,7 @@ async function enrichJobMatchDataLegacy(job, resumes) {
   enrichedJob.score = enrichedJob.matchScore;
   enrichedJob.matches = bestMatch ? [bestMatch] : [];
   enrichedJob.bestMatch = bestMatch;
+  enrichedJob.excluded = false; // Explicitly mark as not excluded
   
   console.log(`Legacy matching result: ${match.filename || 'none'} with score ${enrichedJob.matchScore.toFixed(3)}`);
   
@@ -879,17 +945,19 @@ async function matchResumeToJob(jobDescription, resumes, jobTitle = '') {
   }
   
   // Minimum score threshold - filter out very low relevance jobs
-  const MIN_SCORE_THRESHOLD = 0.08; // 8% minimum match score
+  const MIN_SCORE_THRESHOLD = 0.05; // 5% minimum match score (0.05 = 5%)
   
-  if (bestMatch.score < MIN_SCORE_THRESHOLD && bestMatch.filename) {
-    console.log('Job score below threshold, but keeping match:', {
-      score: bestMatch.score,
-      threshold: MIN_SCORE_THRESHOLD,
-      jobTitle: jobTitle,
-      resume: bestMatch.filename
-    });
-    // Don't exclude - show the match even if low score
-    // return { filename: null, score: 0, topKeywords: [] };
+  if (bestMatch.score < MIN_SCORE_THRESHOLD) {
+    if (bestMatch.filename) {
+      console.log('Job score below threshold, excluding:', {
+        score: bestMatch.score,
+        threshold: MIN_SCORE_THRESHOLD,
+        jobTitle: jobTitle,
+        resume: bestMatch.filename
+      });
+    }
+    // Exclude jobs with very low or zero scores
+    return { filename: null, score: 0, topKeywords: [] };
   }
   
   // Log final result

@@ -372,7 +372,22 @@ async function loadResults() {
   // Update last update time display
   updateLastUpdateTime(settings.lastScanTime);
   
-  // Filter
+  // Filter out excluded jobs (low scores, etc.)
+  jobs = jobs.filter(job => !job.excluded);
+  
+  // Filter out jobs with 0% scores (these are irrelevant matches)
+  // Only filter if job has a bestResume field (meaning matching was attempted)
+  jobs = jobs.filter(job => {
+    const score = job.matchScore ?? job.score ?? 0;
+    // If score is exactly 0 and we attempted matching (bestResume field exists, even if null)
+    // This means the job was matched but got 0% - exclude it
+    if (score === 0 && 'bestResume' in job) {
+      return false; // Exclude 0% matches
+    }
+    return true;
+  });
+  
+  // Filter by text search
   const filterText = document.getElementById('filterText').value.toLowerCase();
   if (filterText) {
     jobs = jobs.filter(job => 
