@@ -134,12 +134,28 @@ async function loadSearchUrls() {
     return;
   }
   
-  listDiv.innerHTML = urls.map((url, index) => `
-    <div class="list-item">
-      <div class="list-item-content" title="${url}">${url}</div>
-      <button class="btn btn-danger" onclick="removeSearchUrl(${index})">Remove</button>
-    </div>
-  `).join('');
+  // Clear existing content
+  listDiv.innerHTML = '';
+  
+  // Create list items with event listeners instead of inline onclick
+  urls.forEach((url, index) => {
+    const listItem = document.createElement('div');
+    listItem.className = 'list-item';
+    
+    const contentDiv = document.createElement('div');
+    contentDiv.className = 'list-item-content';
+    contentDiv.textContent = url;
+    contentDiv.title = url;
+    
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'btn btn-danger';
+    removeBtn.textContent = 'Remove';
+    removeBtn.addEventListener('click', () => removeSearchUrl(index));
+    
+    listItem.appendChild(contentDiv);
+    listItem.appendChild(removeBtn);
+    listDiv.appendChild(listItem);
+  });
 }
 
 async function addSearchUrl() {
@@ -1510,8 +1526,7 @@ async function updateLiveScanStatus() {
   }
 }
 
-// Make functions available globally for onclick handlers
-window.removeSearchUrl = removeSearchUrl;
+// Note: removeSearchUrl is now handled via event listeners, no need to expose globally
 
 function sendRuntimeMessage(message) {
   return new Promise((resolve, reject) => {

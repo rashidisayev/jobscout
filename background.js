@@ -402,11 +402,15 @@ async function enrichJobMatchData(job, resumes) {
   }
   
   const textToMatch = getTextForMatching(job);
-  const match = await matchResumeToJob(textToMatch, resumes);
+  const jobTitle = job.title || '';
+  const match = await matchResumeToJob(textToMatch, resumes, jobTitle);
+  
+  // If match score is below threshold, mark as low relevance
   enrichedJob.bestResume = match.filename || null;
   enrichedJob.matchScore = match.score !== undefined && match.score !== null ? match.score : 0;
   enrichedJob.topKeywords = match.topKeywords || [];
   enrichedJob.score = enrichedJob.matchScore;
+  
   return enrichedJob;
 }
 
@@ -449,13 +453,68 @@ const STOPWORDS = new Set([
   'made', 'may', 'part'
 ]);
 
+// Enhanced tokenization with better handling of technical terms
 function tokenize(text) {
   if (!text) return [];
   return text
     .toLowerCase()
-    .replace(/[^\w\s]/g, ' ')
+    .replace(/[^\w\s#+.-]/g, ' ') // Keep some special chars for tech terms (e.g., C++, .NET)
     .split(/\s+/)
-    .filter(word => word.length > 2 && !STOPWORDS.has(word));
+    .filter(word => word.length > 2 && !STOPWORDS.has(word))
+    .map(word => word.replace(/^[#+.-]+|[#+.-]+$/g, '')) // Clean up special chars at edges
+    .filter(word => word.length > 2); // Filter again after cleaning
+}
+
+// Extract important keywords (skills, technologies, tools)
+function extractImportantKeywords(text) {
+  if (!text) return new Set();
+  
+  const keywords = new Set();
+  const tokens = tokenize(text);
+  
+  // Common technical terms and patterns
+  const techPatterns = [
+    // Programming languages
+    /\b(java|python|javascript|typescript|go|rust|c\+\+|c#|php|ruby|swift|kotlin|scala|r|matlab|perl|shell|bash|powershell)\b/gi,
+    // Frameworks and libraries
+    /\b(react|angular|vue|node|express|django|flask|spring|laravel|rails|asp\.net|\.net|jquery|bootstrap|tailwind)\b/gi,
+    // Databases
+    /\b(mysql|postgresql|mongodb|cassandra|redis|elasticsearch|oracle|sql|nosql|dynamodb|firebase)\b/gi,
+    // Cloud and DevOps
+    /\b(aws|azure|gcp|docker|kubernetes|jenkins|gitlab|github|terraform|ansible|chef|puppet|ci\/cd)\b/gi,
+    // Tools and platforms
+    /\b(git|svn|jira|confluence|slack|agile|scrum|kanban|devops|microservices|api|rest|graphql|soap)\b/gi,
+    // Data and ML
+    /\b(machine learning|ml|ai|artificial intelligence|data science|big data|hadoop|spark|tensorflow|pytorch|pandas|numpy)\b/gi,
+    // Other important terms
+    /\b(frontend|backend|fullstack|full stack|web development|mobile development|ios|android|linux|windows|macos)\b/gi
+  ];
+  
+  // Extract matches from patterns
+  for (const pattern of techPatterns) {
+    const matches = text.match(pattern);
+    if (matches) {
+      matches.forEach(match => {
+        const cleaned = match.toLowerCase().trim();
+        if (cleaned.length > 2) {
+          keywords.add(cleaned);
+        }
+      });
+    }
+  }
+  
+  // Also add capitalized words (often proper nouns, technologies, or company names)
+  const capitalizedWords = text.match(/\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b/g);
+  if (capitalizedWords) {
+    capitalizedWords.forEach(word => {
+      const cleaned = word.toLowerCase().trim();
+      if (cleaned.length > 3 && !STOPWORDS.has(cleaned)) {
+        keywords.add(cleaned);
+      }
+    });
+  }
+  
+  return keywords;
 }
 
 function calculateTF(tokens) {
@@ -502,12 +561,29 @@ function calculateIDF(documents) {
   return idf;
 }
 
-function calculateTFIDF(tokens, idf) {
+function calculateTFIDF(tokens, idf, importantKeywords = new Set()) {
   const tf = calculateTF(tokens);
   const tfidf = {};
+  
+  // Weight important keywords more heavily
+  const IMPORTANT_KEYWORD_WEIGHT = 2.0;
+  
   for (const term in tf) {
-    tfidf[term] = tf[term] * (idf[term] || 0);
+    let weight = 1.0;
+    
+    // Boost important keywords (skills, technologies, etc.)
+    if (importantKeywords.has(term)) {
+      weight = IMPORTANT_KEYWORD_WEIGHT;
+    }
+    
+    // Also boost multi-word technical terms
+    if (term.includes('-') || term.includes('_') || term.length > 8) {
+      weight *= 1.3;
+    }
+    
+    tfidf[term] = tf[term] * (idf[term] || 0) * weight;
   }
+  
   return tfidf;
 }
 
@@ -527,7 +603,8 @@ function calculateCosineSimilarity(vec1, vec2) {
   return dotProduct / (Math.sqrt(norm1) * Math.sqrt(norm2));
 }
 
-function cosineSimilarity(jobDescription, resumeText) {
+// Enhanced cosine similarity with keyword weighting
+function cosineSimilarity(jobDescription, resumeText, jobTitle = '') {
   if (!jobDescription || !resumeText) {
     console.log('Missing text for similarity:', { 
       hasJobDesc: !!jobDescription, 
@@ -549,34 +626,40 @@ function cosineSimilarity(jobDescription, resumeText) {
     return 0;
   }
   
+  // Extract important keywords from both documents
+  const jobKeywords = extractImportantKeywords(jobDescription);
+  const resumeKeywords = extractImportantKeywords(resumeText);
+  const allImportantKeywords = new Set([...jobKeywords, ...resumeKeywords]);
+  
   // Calculate IDF with smoothing
   const idf = calculateIDF([jobTokens, resumeTokens]);
-  const jobTFIDF = calculateTFIDF(jobTokens, idf);
-  const resumeTFIDF = calculateTFIDF(resumeTokens, idf);
+  const jobTFIDF = calculateTFIDF(jobTokens, idf, allImportantKeywords);
+  const resumeTFIDF = calculateTFIDF(resumeTokens, idf, allImportantKeywords);
   
-  // Calculate cosine similarity
-  const similarity = calculateCosineSimilarity(jobTFIDF, resumeTFIDF);
+  // Calculate base cosine similarity
+  let similarity = calculateCosineSimilarity(jobTFIDF, resumeTFIDF);
+  
+  // Bonus for matching important keywords
+  const matchingKeywords = [...jobKeywords].filter(kw => resumeKeywords.has(kw));
+  if (matchingKeywords.length > 0) {
+    const keywordBonus = Math.min(0.15, matchingKeywords.length * 0.02); // Max 15% bonus
+    similarity += keywordBonus;
+  }
+  
+  // Title matching bonus (if job title matches resume content)
+  if (jobTitle) {
+    const titleTokens = tokenize(jobTitle);
+    const titleKeywords = extractImportantKeywords(jobTitle);
+    const titleMatchesResume = titleTokens.some(token => resumeTokens.includes(token)) ||
+                               [...titleKeywords].some(kw => resumeKeywords.has(kw));
+    
+    if (titleMatchesResume) {
+      similarity += 0.05; // 5% bonus for title match
+    }
+  }
   
   // Ensure similarity is a valid number between 0 and 1
   const normalizedSimilarity = Math.max(0, Math.min(1, similarity));
-  
-  // Debug logging for score calculation
-  if (normalizedSimilarity < 0.01 && jobTokens.length > 10 && resumeTokens.length > 10) {
-    const commonTerms = Object.keys(jobTFIDF).filter(term => resumeTFIDF[term]);
-    const jobTFIDFValues = Object.values(jobTFIDF).filter(v => v > 0);
-    const resumeTFIDFValues = Object.values(resumeTFIDF).filter(v => v > 0);
-    console.log('Low similarity score (debug):', {
-      rawScore: similarity,
-      normalizedScore: normalizedSimilarity,
-      jobTokensCount: jobTokens.length,
-      resumeTokensCount: resumeTokens.length,
-      commonTermsCount: commonTerms.length,
-      jobTFIDFNonZero: jobTFIDFValues.length,
-      resumeTFIDFNonZero: resumeTFIDFValues.length,
-      sampleCommonTerms: commonTerms.slice(0, 10),
-      sampleIDF: Object.fromEntries(Object.entries(idf).slice(0, 5))
-    });
-  }
   
   return normalizedSimilarity;
 }
@@ -587,35 +670,79 @@ function getTopMatchingKeywords(jobDescription, resumeText, topN = 10) {
   if (jobTokens.length === 0 || resumeTokens.length === 0) {
     return [];
   }
+  
+  // Extract important keywords for weighting
+  const jobKeywords = extractImportantKeywords(jobDescription);
+  const resumeKeywords = extractImportantKeywords(resumeText);
+  const allImportantKeywords = new Set([...jobKeywords, ...resumeKeywords]);
+  
   const idf = calculateIDF([jobTokens, resumeTokens]);
-  const jobTFIDF = calculateTFIDF(jobTokens, idf);
-  const resumeTFIDF = calculateTFIDF(resumeTokens, idf);
+  const jobTFIDF = calculateTFIDF(jobTokens, idf, allImportantKeywords);
+  const resumeTFIDF = calculateTFIDF(resumeTokens, idf, allImportantKeywords);
+  
+  // Prioritize important keywords in the results
   const commonTerms = new Set(
     Object.keys(jobTFIDF).filter(term => resumeTFIDF[term])
   );
+  
   const termScores = [];
   for (const term of commonTerms) {
-    const score = jobTFIDF[term] * resumeTFIDF[term];
+    let score = jobTFIDF[term] * resumeTFIDF[term];
+    
+    // Boost important keywords in ranking
+    if (allImportantKeywords.has(term)) {
+      score *= 1.5;
+    }
+    
     termScores.push({ term, score });
   }
+  
   termScores.sort((a, b) => b.score - a.score);
   return termScores.slice(0, topN).map(item => item.term);
 }
 
-// Match job description with best resume using NLP
-async function matchResumeToJob(jobDescription, resumes) {
+// Check if job should be excluded based on exclusion filters
+function shouldExcludeJob(jobTitle, jobDescription) {
+  if (!jobTitle && !jobDescription) return false;
+  
+  const text = `${jobTitle || ''} ${jobDescription || ''}`.toLowerCase();
+  
+  // Exclusion patterns for clearly irrelevant jobs
+  const exclusionPatterns = [
+    // Different career levels
+    /\b(intern|internship|entry level|junior|jr\.|graduate|student|trainee|apprentice)\b/i,
+    // Different job types
+    /\b(part time|contractor|freelance|consultant|volunteer|temporary)\b/i,
+    // Different industries (add more as needed)
+    /\b(real estate|sales representative|retail|cashier|waiter|server|bartender|driver|delivery|warehouse|factory|manufacturing|construction|plumber|electrician|mechanic)\b/i,
+    // Different skills (if job requires skills not in resume, but this is handled by score)
+    // We'll keep this minimal to avoid false positives
+  ];
+  
+  // Only exclude if multiple exclusion patterns match (to avoid false positives)
+  let exclusionCount = 0;
+  for (const pattern of exclusionPatterns) {
+    if (pattern.test(text)) {
+      exclusionCount++;
+    }
+  }
+  
+  // Exclude if 2+ exclusion patterns match
+  return exclusionCount >= 2;
+}
+
+// Match job description with best resume using enhanced NLP
+async function matchResumeToJob(jobDescription, resumes, jobTitle = '') {
   let bestMatch = { filename: null, score: 0, topKeywords: [] };
   
   if (!jobDescription || jobDescription.trim().length < 10) {
     console.log('Job description too short for matching');
-    // Still try to match with first available resume if description is short
-    if (resumes.length > 0 && resumes[0].text && resumes[0].text.trim().length >= 10) {
-      return {
-        filename: resumes[0].filename,
-        score: 0,
-        topKeywords: []
-      };
-    }
+    return bestMatch;
+  }
+  
+  // Check exclusion filters
+  if (shouldExcludeJob(jobTitle, jobDescription)) {
+    console.log('Job excluded by filters:', jobTitle);
     return bestMatch;
   }
   
@@ -634,7 +761,7 @@ async function matchResumeToJob(jobDescription, resumes) {
     }
     
     hasValidResume = true;
-    const score = cosineSimilarity(jobDescription, resume.text);
+    const score = cosineSimilarity(jobDescription, resume.text, jobTitle);
     
     // Always update if this is the first valid resume or if score is better (including equal)
     if (!bestMatch.filename || score >= bestMatch.score) {
@@ -647,18 +774,16 @@ async function matchResumeToJob(jobDescription, resumes) {
     }
   }
   
-  // If we have valid resumes but no match was found (all scores were 0 or negative),
-  // still return the first valid resume as a fallback
-  if (!bestMatch.filename && hasValidResume && resumes.length > 0) {
-    const firstValidResume = resumes.find(r => r && r.text && r.text.trim().length >= 10);
-    if (firstValidResume) {
-      console.log('No match found, using first valid resume as fallback:', firstValidResume.filename);
-      return {
-        filename: firstValidResume.filename,
-        score: 0,
-        topKeywords: []
-      };
-    }
+  // Minimum score threshold - filter out very low relevance jobs
+  const MIN_SCORE_THRESHOLD = 0.08; // 8% minimum match score
+  
+  if (bestMatch.score < MIN_SCORE_THRESHOLD && bestMatch.filename) {
+    console.log('Job score below threshold, excluding:', {
+      score: bestMatch.score,
+      threshold: MIN_SCORE_THRESHOLD,
+      jobTitle: jobTitle
+    });
+    return { filename: null, score: 0, topKeywords: [] };
   }
   
   // Log if no good match found
