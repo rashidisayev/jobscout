@@ -43,6 +43,9 @@ const SELECTORS = {
     '.job-card-container__metadata-wrapper span'
   ],
   jobDate: [
+    'span.white-space-pre', // Date is often in white-space-pre spans
+    '.white-space-pre',
+    'span[class*="white-space-pre"]',
     '.job-search-card__listdate',
     '.job-search-card__listdate--new',
     'time[datetime]',
@@ -285,24 +288,103 @@ async function scrapeJobs(onlyNew = true, lastSeenIds = [], pageIndex = 0) {
             }
           }
           
+          // If still unknown, specifically look for white-space-pre spans and their siblings/parents
+          if (datePosted === 'Unknown') {
+            const whiteSpacePreElements = card.querySelectorAll('span.white-space-pre, .white-space-pre, span[class*="white-space-pre"], [class*="white-space-pre"]');
+            for (const el of whiteSpacePreElements) {
+              // Check parent element (date is often in the parent of white-space-pre)
+              const parent = el.parentElement;
+              if (parent) {
+                const parentClone = parent.cloneNode(true);
+                parentClone.querySelectorAll('span.white-space-pre, .white-space-pre').forEach(ws => ws.remove());
+                let text = parentClone.textContent?.trim() || parentClone.innerText?.trim() || '';
+                if (!text || text.length === 0) {
+                  text = parent.textContent?.trim() || parent.innerText?.trim() || '';
+                }
+                
+                if (text && text.length > 0 && text.length < 150) {
+                  const hasDateKeywords = text.match(/\b(ago|day|days|week|weeks|month|months|hour|hours|minute|minutes|today|yesterday|just|now|posted|active|reposted)\b/i);
+                  if (hasDateKeywords) {
+                    const isLocation = text.match(/(Remote|On-site|Hybrid|United States|USA|Canada|UK|Europe|Asia|Australia|Germany|France|Spain|Italy|New York|San Francisco|Los Angeles|Chicago|Boston|Seattle|Austin|Denver|Atlanta|London|Toronto|Vancouver|Sydney|Melbourne|Berlin|Vienna|Austria)/i) ||
+                                      text.match(/^[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?,\s*[A-Z]{2}$/);
+                    if (!isLocation) {
+                      const dateMatch = text.match(/(?:reposted|posted)\s+(.+)/i);
+                      if (dateMatch && dateMatch[1] && typeof dateMatch[1] === 'string') {
+                        datePosted = String(dateMatch[1]).trim();
+                        break;
+                      } else if (text.match(/\b(ago|day|days|week|weeks|month|months)\b/i)) {
+                        datePosted = String(text).trim();
+                        break;
+                      }
+                    }
+                  }
+                }
+              }
+              
+              // Check next sibling
+              const nextSibling = el.nextElementSibling;
+              if (nextSibling && datePosted === 'Unknown') {
+                const text = nextSibling.textContent?.trim() || nextSibling.innerText?.trim() || '';
+                if (text && text.length > 0 && text.length < 100) {
+                  if (text.match(/\b(ago|day|days|week|weeks|month|months|hour|hours|minute|minutes|today|yesterday|just|now|posted|active|reposted)\b/i)) {
+                    const isLocation = text.match(/(Remote|On-site|Hybrid|United States|USA|Canada|UK|Europe|Asia|Australia|Germany|France|Spain|Italy|New York|San Francisco|Los Angeles|Chicago|Boston|Seattle|Austin|Denver|Atlanta|London|Toronto|Vancouver|Sydney|Melbourne|Berlin|Vienna|Austria)/i);
+                    if (!isLocation) {
+                      const dateMatch = text.match(/(?:reposted|posted)\s+(.+)/i);
+                      if (dateMatch && dateMatch[1] && typeof dateMatch[1] === 'string') {
+                        datePosted = String(dateMatch[1]).trim();
+                        break;
+                      } else {
+                        datePosted = String(text).trim();
+                        break;
+                      }
+                    }
+                  }
+                }
+              }
+              
+              // Check previous sibling
+              const prevSibling = el.previousElementSibling;
+              if (prevSibling && datePosted === 'Unknown') {
+                const text = prevSibling.textContent?.trim() || prevSibling.innerText?.trim() || '';
+                if (text && text.length > 0 && text.length < 100) {
+                  if (text.match(/\b(ago|day|days|week|weeks|month|months|hour|hours|minute|minutes|today|yesterday|just|now|posted|active|reposted)\b/i)) {
+                    const isLocation = text.match(/(Remote|On-site|Hybrid|United States|USA|Canada|UK|Europe|Asia|Australia|Germany|France|Spain|Italy|New York|San Francisco|Los Angeles|Chicago|Boston|Seattle|Austin|Denver|Atlanta|London|Toronto|Vancouver|Sydney|Melbourne|Berlin|Vienna|Austria)/i);
+                    if (!isLocation) {
+                      const dateMatch = text.match(/(?:reposted|posted)\s+(.+)/i);
+                      if (dateMatch && dateMatch[1] && typeof dateMatch[1] === 'string') {
+                        datePosted = String(dateMatch[1]).trim();
+                        break;
+                      } else {
+                        datePosted = String(text).trim();
+                        break;
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+          
           // If still unknown, search through all metadata elements
           if (datePosted === 'Unknown') {
             const metadataElements = card.querySelectorAll('.job-search-card__metadata-item, .base-search-card__metadata-item, .job-card-container__metadata-item, .base-search-card__metadata, .job-search-card__metadata, li, span, div');
             for (const el of metadataElements) {
               const text = el.textContent?.trim() || '';
-              if (!text || text.length > 50) continue;
+              if (!text || text.length > 100) continue; // Increased from 50 to 100
               
               // Check if it looks like a date
               if (text.match(/\b(ago|day|days|week|weeks|month|months|hour|hours|minute|minutes|today|yesterday|just|now|posted|active|reposted)\b/i)) {
-                // Exclude location patterns
-                if (!text.match(/(Remote|On-site|Hybrid|United States|USA|Canada|UK|Europe|Asia|Australia|Germany|France|Spain|Italy|New York|San Francisco|Los Angeles|Chicago|Boston|Seattle|Austin|Denver|Atlanta|London|Toronto|Vancouver|Sydney|Melbourne)/i) &&
-                    !text.match(/^[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?,\s*[A-Z]{2}$/)) {
+                // Exclude location patterns - but be less strict
+                const isLocation = text.match(/(Remote|On-site|Hybrid|United States|USA|Canada|UK|Europe|Asia|Australia|Germany|France|Spain|Italy|New York|San Francisco|Los Angeles|Chicago|Boston|Seattle|Austin|Denver|Atlanta|London|Toronto|Vancouver|Sydney|Melbourne|Berlin|Vienna|Austria)/i) ||
+                                  text.match(/^[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?,\s*[A-Z]{2}$/);
+                
+                if (!isLocation) {
                   // Extract date from "Reposted/Posted X weeks ago" format
                   const dateMatch = text.match(/(?:reposted|posted)\s+(.+)/i);
-                  if (dateMatch && dateMatch[1]) {
-                    datePosted = dateMatch[1].trim();
+                  if (dateMatch && dateMatch[1] && typeof dateMatch[1] === 'string') {
+                    datePosted = String(dateMatch[1]).trim();
                   } else {
-                    datePosted = text;
+                    datePosted = String(text).trim();
                   }
                   break;
                 }
@@ -497,6 +579,83 @@ async function scrapeJobs(onlyNew = true, lastSeenIds = [], pageIndex = 0) {
         }
       }
       
+      // If still unknown, specifically look for white-space-pre spans and their siblings/parents
+      if (datePosted === 'Unknown') {
+        const whiteSpacePreElements = card.querySelectorAll('span.white-space-pre, .white-space-pre, span[class*="white-space-pre"], [class*="white-space-pre"]');
+        for (const el of whiteSpacePreElements) {
+          // Check parent element (date is often in the parent of white-space-pre)
+          const parent = el.parentElement;
+          if (parent) {
+            const parentClone = parent.cloneNode(true);
+            parentClone.querySelectorAll('span.white-space-pre, .white-space-pre').forEach(ws => ws.remove());
+            let text = parentClone.textContent?.trim() || parentClone.innerText?.trim() || '';
+            if (!text || text.length === 0) {
+              text = parent.textContent?.trim() || parent.innerText?.trim() || '';
+            }
+            
+            if (text && text.length > 0 && text.length < 150) {
+              const hasDateKeywords = text.match(/\b(ago|day|days|week|weeks|month|months|hour|hours|minute|minutes|today|yesterday|just|now|posted|active|reposted)\b/i);
+              if (hasDateKeywords) {
+                const isLocation = text.match(/(Remote|On-site|Hybrid|United States|USA|Canada|UK|Europe|Asia|Australia|Germany|France|Spain|Italy|New York|San Francisco|Los Angeles|Chicago|Boston|Seattle|Austin|Denver|Atlanta|London|Toronto|Vancouver|Sydney|Melbourne|Berlin|Vienna|Austria)/i) ||
+                                  text.match(/^[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?,\s*[A-Z]{2}$/);
+                if (!isLocation) {
+                  const dateMatch = text.match(/(?:reposted|posted)\s+(.+)/i);
+                  if (dateMatch && dateMatch[1] && typeof dateMatch[1] === 'string') {
+                    datePosted = String(dateMatch[1]).trim();
+                    break;
+                  } else if (text.match(/\b(ago|day|days|week|weeks|month|months)\b/i)) {
+                    datePosted = String(text).trim();
+                    break;
+                  }
+                }
+              }
+            }
+          }
+          
+          // Check next sibling
+          const nextSibling = el.nextElementSibling;
+          if (nextSibling && datePosted === 'Unknown') {
+            const text = nextSibling.textContent?.trim() || nextSibling.innerText?.trim() || '';
+            if (text && text.length > 0 && text.length < 100) {
+              if (text.match(/\b(ago|day|days|week|weeks|month|months|hour|hours|minute|minutes|today|yesterday|just|now|posted|active|reposted)\b/i)) {
+                const isLocation = text.match(/(Remote|On-site|Hybrid|United States|USA|Canada|UK|Europe|Asia|Australia|Germany|France|Spain|Italy|New York|San Francisco|Los Angeles|Chicago|Boston|Seattle|Austin|Denver|Atlanta|London|Toronto|Vancouver|Sydney|Melbourne|Berlin|Vienna|Austria)/i);
+                if (!isLocation) {
+                  const dateMatch = text.match(/(?:reposted|posted)\s+(.+)/i);
+                  if (dateMatch && dateMatch[1] && typeof dateMatch[1] === 'string') {
+                    datePosted = String(dateMatch[1]).trim();
+                    break;
+                  } else {
+                    datePosted = String(text).trim();
+                    break;
+                  }
+                }
+              }
+            }
+          }
+          
+          // Check previous sibling
+          const prevSibling = el.previousElementSibling;
+          if (prevSibling && datePosted === 'Unknown') {
+            const text = prevSibling.textContent?.trim() || prevSibling.innerText?.trim() || '';
+            if (text && text.length > 0 && text.length < 100) {
+              if (text.match(/\b(ago|day|days|week|weeks|month|months|hour|hours|minute|minutes|today|yesterday|just|now|posted|active|reposted)\b/i)) {
+                const isLocation = text.match(/(Remote|On-site|Hybrid|United States|USA|Canada|UK|Europe|Asia|Australia|Germany|France|Spain|Italy|New York|San Francisco|Los Angeles|Chicago|Boston|Seattle|Austin|Denver|Atlanta|London|Toronto|Vancouver|Sydney|Melbourne|Berlin|Vienna|Austria)/i);
+                if (!isLocation) {
+                  const dateMatch = text.match(/(?:reposted|posted)\s+(.+)/i);
+                  if (dateMatch && dateMatch[1] && typeof dateMatch[1] === 'string') {
+                    datePosted = String(dateMatch[1]).trim();
+                    break;
+                  } else {
+                    datePosted = String(text).trim();
+                    break;
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      
       // If still unknown, try to find all time elements in the card
       if (datePosted === 'Unknown') {
         const timeElements = card.querySelectorAll('time[datetime]');
@@ -525,10 +684,10 @@ async function scrapeJobs(onlyNew = true, lastSeenIds = [], pageIndex = 0) {
             if (text) {
               // Extract date from "Reposted/Posted X weeks ago" format
               const dateMatch = text.match(/(?:reposted|posted)\s+(.+)/i);
-              if (dateMatch && dateMatch[1]) {
-                datePosted = dateMatch[1].trim();
+              if (dateMatch && dateMatch[1] && typeof dateMatch[1] === 'string') {
+                datePosted = String(dateMatch[1]).trim();
               } else {
-                datePosted = text;
+                datePosted = String(text).trim();
               }
               break;
             }
@@ -560,19 +719,21 @@ async function scrapeJobs(onlyNew = true, lastSeenIds = [], pageIndex = 0) {
         const metadataElements = card.querySelectorAll('.job-search-card__metadata-item, .base-search-card__metadata-item, .job-card-container__metadata-item, .base-search-card__metadata, .job-search-card__metadata, li, span, div');
         for (const el of metadataElements) {
           const text = el.textContent?.trim() || '';
-          if (!text || text.length > 50) continue; // Skip long text (likely description)
+          if (!text || text.length > 100) continue; // Increased from 50 to 100
           
           // Check if it looks like a date (contains date keywords)
           if (text.match(/\b(ago|day|days|week|weeks|month|months|hour|hours|minute|minutes|today|yesterday|just|now|posted|active|reposted)\b/i)) {
-            // Make sure it's not a location (exclude obvious location patterns)
-            if (!text.match(/(Remote|On-site|Hybrid|United States|USA|Canada|UK|Europe|Asia|Australia|Germany|France|Spain|Italy|New York|San Francisco|Los Angeles|Chicago|Boston|Seattle|Austin|Denver|Atlanta|London|Toronto|Vancouver|Sydney|Melbourne)/i) &&
-                !text.match(/^[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?,\s*[A-Z]{2}$/)) {
+            // Exclude location patterns - but be less strict
+            const isLocation = text.match(/(Remote|On-site|Hybrid|United States|USA|Canada|UK|Europe|Asia|Australia|Germany|France|Spain|Italy|New York|San Francisco|Los Angeles|Chicago|Boston|Seattle|Austin|Denver|Atlanta|London|Toronto|Vancouver|Sydney|Melbourne|Berlin|Vienna|Austria)/i) ||
+                              text.match(/^[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?,\s*[A-Z]{2}$/);
+            
+            if (!isLocation) {
               // Extract date from "Reposted/Posted X weeks ago" format
               const dateMatch = text.match(/(?:reposted|posted)\s+(.+)/i);
-              if (dateMatch && dateMatch[1]) {
-                datePosted = dateMatch[1].trim();
+              if (dateMatch && dateMatch[1] && typeof dateMatch[1] === 'string') {
+                datePosted = String(dateMatch[1]).trim();
               } else {
-                datePosted = text;
+                datePosted = String(text).trim();
               }
               break;
             }
@@ -585,19 +746,21 @@ async function scrapeJobs(onlyNew = true, lastSeenIds = [], pageIndex = 0) {
         const allElements = card.querySelectorAll('span, li, div, p, time');
         for (const el of allElements) {
           const text = el.textContent?.trim() || '';
-          if (!text || text.length > 50) continue;
+          if (!text || text.length > 100) continue; // Increased from 50 to 100
           
           // Check for date patterns (including "Reposted" and "Posted")
           if (text.match(/\b(ago|day|days|week|weeks|month|months|hour|hours|minute|minutes|today|yesterday|just|now|posted|active|reposted)\b/i)) {
-            // Exclude location patterns
-            if (!text.match(/(Remote|On-site|Hybrid|United States|USA|Canada|UK|Europe|Asia|Australia|Germany|France|Spain|Italy|New York|San Francisco|Los Angeles|Chicago|Boston|Seattle|Austin|Denver|Atlanta|London|Toronto|Vancouver|Sydney|Melbourne)/i) &&
-                !text.match(/^[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?,\s*[A-Z]{2}$/)) {
+            // Exclude location patterns - but be less strict
+            const isLocation = text.match(/(Remote|On-site|Hybrid|United States|USA|Canada|UK|Europe|Asia|Australia|Germany|France|Spain|Italy|New York|San Francisco|Los Angeles|Chicago|Boston|Seattle|Austin|Denver|Atlanta|London|Toronto|Vancouver|Sydney|Melbourne|Berlin|Vienna|Austria)/i) ||
+                              text.match(/^[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?,\s*[A-Z]{2}$/);
+            
+            if (!isLocation) {
               // Extract date from "Reposted/Posted X weeks ago" format
               const dateMatch = text.match(/(?:reposted|posted)\s+(.+)/i);
-              if (dateMatch && dateMatch[1]) {
-                datePosted = dateMatch[1].trim();
+              if (dateMatch && dateMatch[1] && typeof dateMatch[1] === 'string') {
+                datePosted = String(dateMatch[1]).trim();
               } else {
-                datePosted = text;
+                datePosted = String(text).trim();
               }
               console.log('Found date in text element:', text, '-> extracted:', datePosted);
               break;

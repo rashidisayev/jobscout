@@ -37,6 +37,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadResults();
   await updateLiveScanStatus();
   
+  // Update last update time every minute
+  setInterval(async () => {
+    const settings = await chrome.storage.local.get(['lastScanTime']);
+    updateLastUpdateTime(settings.lastScanTime);
+  }, 60000); // Update every minute
+  
   // Event listeners
   document.getElementById('addSearchUrl').addEventListener('click', addSearchUrl);
   document.getElementById('newSearchUrl').addEventListener('keypress', (e) => {
@@ -46,11 +52,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('saveSettings').addEventListener('click', saveSettings);
   document.getElementById('exportCsv').addEventListener('click', exportCsv);
   document.getElementById('clearAllJobs').addEventListener('click', clearAllJobs);
+  document.getElementById('scanTabNow').addEventListener('click', scanTabNow);
   document.getElementById('sortBy').addEventListener('change', loadResults);
   document.getElementById('filterText').addEventListener('input', loadResults);
   
-  // Listen for storage changes to update live status
+  // Listen for storage changes to update live status and last update time
   chrome.storage.onChanged.addListener((changes, areaName) => {
+    // Update last update time if lastScanTime changed
+    if (changes.lastScanTime) {
+      updateLastUpdateTime(changes.lastScanTime.newValue);
+    }
     if (areaName === 'local') {
       const runStateKeys = ['scanRunStatus', 'scanPagesProcessed', 'scanJobsScanned', 'scanNewJobs'];
       const hasRunStateChange = runStateKeys.some(key => changes[key]);
@@ -332,8 +343,11 @@ async function saveSettings() {
 
 // Results display
 async function loadResults() {
-  const settings = await chrome.storage.local.get(['jobs']);
+  const settings = await chrome.storage.local.get(['jobs', 'lastScanTime']);
   let jobs = settings.jobs || [];
+  
+  // Update last update time display
+  updateLastUpdateTime(settings.lastScanTime);
   
   // Filter
   const filterText = document.getElementById('filterText').value.toLowerCase();
@@ -361,6 +375,40 @@ async function loadResults() {
   });
   
   displayResults(jobs);
+}
+
+function updateLastUpdateTime(lastScanTime) {
+  const lastUpdateElement = document.getElementById('lastUpdateTime');
+  if (!lastUpdateElement) return;
+  
+  if (!lastScanTime) {
+    lastUpdateElement.textContent = 'Never updated';
+    return;
+  }
+  
+  const now = Date.now();
+  const diff = now - lastScanTime;
+  const diffSeconds = Math.floor(diff / 1000);
+  const diffMinutes = Math.floor(diffSeconds / 60);
+  const diffHours = Math.floor(diffMinutes / 60);
+  const diffDays = Math.floor(diffHours / 24);
+  
+  let timeText;
+  if (diffSeconds < 60) {
+    timeText = 'Just now';
+  } else if (diffMinutes < 60) {
+    timeText = `${diffMinutes} minute${diffMinutes !== 1 ? 's' : ''} ago`;
+  } else if (diffHours < 24) {
+    timeText = `${diffHours} hour${diffHours !== 1 ? 's' : ''} ago`;
+  } else if (diffDays < 7) {
+    timeText = `${diffDays} day${diffDays !== 1 ? 's' : ''} ago`;
+  } else {
+    // For older dates, show the actual date
+    const date = new Date(lastScanTime);
+    timeText = `Last updated: ${date.toLocaleDateString()} at ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+  }
+  
+  lastUpdateElement.textContent = `Last updated: ${timeText}`;
 }
 
 function displayResults(jobs) {
@@ -1345,6 +1393,54 @@ async function exportCsv() {
 }
 
 // Clear all jobs
+// Scan tab now
+async function scanTabNow() {
+  try {
+    // Check if there are any search URLs configured
+    const { searchUrls = [] } = await chrome.storage.local.get(['searchUrls']);
+    
+    if (searchUrls.length === 0) {
+      alert('Please add at least one search URL in the "Search URLs" tab before scanning.');
+      return;
+    }
+    
+    // Show loading state
+    const button = document.getElementById('scanTabNow');
+    const originalText = button.textContent;
+    button.disabled = true;
+    button.textContent = 'Scanning...';
+    
+    // Send message to background script to start scan
+    chrome.runtime.sendMessage({ action: 'scanNow' }, (response) => {
+      button.disabled = false;
+      button.textContent = originalText;
+      
+      if (chrome.runtime.lastError) {
+        console.error('Error starting scan:', chrome.runtime.lastError);
+        alert('Error starting scan: ' + chrome.runtime.lastError.message);
+        return;
+      }
+      
+      if (response && response.success) {
+        // Reload results after a short delay to allow scan to start
+        setTimeout(() => {
+          loadResults();
+        }, 2000);
+      } else if (response && response.error) {
+        alert('Error starting scan: ' + response.error);
+      }
+    });
+  } catch (error) {
+    console.error('Error initiating scan:', error);
+    alert('Error initiating scan. Please try again.');
+    const button = document.getElementById('scanTabNow');
+    if (button) {
+      button.disabled = false;
+      button.textContent = 'Scan Tab Now';
+    }
+  }
+}
+
 async function clearAllJobs() {
   const settings = await chrome.storage.local.get(['jobs']);
   const jobs = settings.jobs || [];

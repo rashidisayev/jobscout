@@ -71,7 +71,10 @@
     <!-- Results Tab -->
     <div class="tab-content" id="results-tab">
       <section class="section">
-        <h2>Job Results</h2>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+          <h2 style="margin: 0;">Job Results</h2>
+          <div id="lastUpdateTime" style="font-size: 0.9rem; color: #666; font-style: italic;"></div>
+        </div>
         
         <div class="results-controls">
           <div class="filter-group">
@@ -89,6 +92,7 @@
           </div>
           
           <button id="exportCsv" class="btn btn-secondary">Export CSV</button>
+          <button id="scanTabNow" class="btn btn-primary">Scan Tab Now</button>
           <button id="clearAllJobs" class="btn btn-danger">Clear All Jobs</button>
         </div>
         
