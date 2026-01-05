@@ -60,3 +60,4 @@ export const PAGINATION = {
   RESULTS_PER_PAGE: 20
 };
 
+

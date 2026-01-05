@@ -70,8 +70,53 @@ function removeDangerousNodes(root) {
  * @returns {string} HTML content of the job description
  */
 export function extractDescriptionContent(doc) {
-  // Strategy 1: Look for embedded JSON data in script tags
-  const scripts = doc.querySelectorAll('script[type="application/ld+json"], script:not([src])');
+  console.log('[extractDescriptionContent] ===== STARTING EXTRACTION =====');
+  console.log('[extractDescriptionContent] doc:', doc);
+  console.log('[extractDescriptionContent] doc.body exists:', !!doc.body);
+  console.log('[extractDescriptionContent] doc.body text length:', doc.body?.textContent?.length || 0);
+  console.log('[extractDescriptionContent] doc.URL:', doc.URL || doc.location?.href || 'unknown');
+  console.log('[extractDescriptionContent] doc.querySelectorAll("article").length:', doc.querySelectorAll('article').length);
+  console.log('[extractDescriptionContent] doc.querySelectorAll("div").length:', doc.querySelectorAll('div').length);
+  
+  // Strategy 1: Look for JSON-LD with JobPosting type
+  try {
+    const scripts = doc.querySelectorAll('script[type="application/ld+json"]');
+    console.log('[extractDescriptionContent] Found JSON-LD scripts:', scripts.length);
+    for (const script of scripts) {
+      try {
+        const data = JSON.parse(script.textContent || '');
+        let jobPosting = null;
+
+        if (data['@type'] === 'JobPosting' || data['@type'] === 'http://schema.org/JobPosting') {
+          jobPosting = data;
+        } else if (Array.isArray(data['@graph'])) {
+          jobPosting = data['@graph'].find(item =>
+            item['@type'] === 'JobPosting' || item['@type'] === 'http://schema.org/JobPosting'
+          );
+        } else if (data.mainEntity && (data.mainEntity['@type'] === 'JobPosting' || data.mainEntity['@type'] === 'http://schema.org/JobPosting')) {
+          jobPosting = data.mainEntity;
+        }
+
+        if (jobPosting && jobPosting.description) {
+          const desc = jobPosting.description;
+          // Basic check for length after stripping HTML to avoid short/irrelevant snippets
+          const tempDiv = doc.createElement('div');
+          tempDiv.innerHTML = desc;
+          if ((tempDiv.textContent || tempDiv.innerText || '').trim().length > 100) {
+            console.log('[extractDescriptionContent] Found from JSON-LD');
+            return desc; // Return the original HTML from JSON-LD
+          }
+        }
+      } catch (e) {
+        // Invalid JSON, continue
+      }
+    }
+  } catch (e) {
+    console.warn('[extractDescriptionContent] Error parsing JSON-LD:', e);
+  }
+  
+  // Strategy 1b: Look for embedded JSON data in script tags (fallback)
+  const scripts = doc.querySelectorAll('script:not([src])');
   for (const script of scripts) {
     try {
       const text = script.textContent || '';
@@ -83,6 +128,7 @@ export function extractDescriptionContent(doc) {
                        data['@graph']?.find(item => item.description)?.description ||
                        data.mainEntity?.description;
           if (desc && typeof desc === 'string' && desc.length > 100) {
+            console.log('[extractDescriptionContent] Found from embedded JSON');
             return `<p>${desc.replace(/\n/g, '</p><p>')}</p>`;
           }
         }
@@ -92,13 +138,30 @@ export function extractDescriptionContent(doc) {
     }
   }
   
-  // Strategy 2: Look for data attributes
+  // Strategy 2: Meta tags
+  try {
+    const metaDescription = doc.querySelector('meta[name="description"]')?.getAttribute('content');
+    if (metaDescription && metaDescription.length > 100) {
+      console.log('[extractDescriptionContent] Found from meta[name="description"]');
+      return `<p>${metaDescription}</p>`;
+    }
+    const ogDescription = doc.querySelector('meta[property="og:description"]')?.getAttribute('content');
+    if (ogDescription && ogDescription.length > 100) {
+      console.log('[extractDescriptionContent] Found from meta[property="og:description"]');
+      return `<p>${ogDescription}</p>`;
+    }
+  } catch (e) {
+    console.warn('[extractDescriptionContent] Error parsing meta tags:', e);
+  }
+  
+  // Strategy 2b: Look for data attributes
   const dataElements = doc.querySelectorAll('[data-description], [data-job-description], [data-content]');
   for (const el of dataElements) {
     const desc = el.getAttribute('data-description') || 
                  el.getAttribute('data-job-description') || 
                  el.getAttribute('data-content');
     if (desc && desc.length > 100) {
+      console.log('[extractDescriptionContent] Found from data attribute');
       return desc;
     }
   }
@@ -245,9 +308,11 @@ export function extractDescriptionContent(doc) {
     'div.jobs-description__section'
   ];
   
+  console.log('[extractDescriptionContent] Trying CSS selectors, count:', selectors.length);
   for (const selector of selectors) {
     try {
       const element = doc.querySelector(selector);
+      console.log(`[extractDescriptionContent] Selector "${selector}":`, element ? 'found' : 'not found');
       if (!element) continue;
       
       const clone = element.cloneNode(true);
@@ -255,17 +320,28 @@ export function extractDescriptionContent(doc) {
       let inner = clone.innerHTML?.trim() || '';
       if (!inner) {
         const text = clone.textContent?.trim();
+        console.log(`[extractDescriptionContent] Selector "${selector}" text length:`, text?.length || 0);
         if (text && text.length > 50) {
           inner = `<p>${text}</p>`;
         }
       }
+      console.log(`[extractDescriptionContent] Selector "${selector}" inner length:`, inner.length);
       if (inner.length > 100) {
+        console.log(`[extractDescriptionContent] Found using selector: ${selector}`);
         return inner;
       }
     } catch (e) {
+      console.error(`[extractDescriptionContent] Error with selector "${selector}":`, e);
       // Invalid selector, continue
     }
   }
+  
+  console.log('[extractDescriptionContent] No description found using any strategy.');
+  console.log('[extractDescriptionContent] Final check - doc.body.innerHTML length:', doc.body?.innerHTML?.length || 0);
+  console.log('[extractDescriptionContent] Returning empty string');
+  
+  // Return empty string (not null) to indicate no description found
+  return '';
   
   // Strategy 5: Find largest text block
   const candidates = doc.querySelectorAll('div, section, article, main');
@@ -480,4 +556,5 @@ export function createMetadataExtractors(doc) {
   
   return { getTitle, getCompany, getLocation, getDate };
 }
+
 

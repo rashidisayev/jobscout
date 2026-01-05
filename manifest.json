@@ -49,6 +49,7 @@
         "scripts/matchingEngine.js",
         "scripts/embeddings.js",
         "scripts/descriptionExtractor.js",
+        "scripts/jobExtractor.js",
         "vendor/onnx/*.onnx",
         "vendor/onnx/*.wasm"
       ],
