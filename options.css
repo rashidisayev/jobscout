@@ -264,6 +264,12 @@ header h1 {
   flex-wrap: wrap;
 }
 
+.results-summary {
+  font-size: 13px;
+  color: #555;
+  margin-bottom: 8px;
+}
+
 .filter-group {
   display: flex;
   align-items: center;
@@ -285,6 +291,24 @@ header h1 {
 
 .results-table {
   overflow-x: auto;
+}
+
+.pagination-controls {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.pagination-controls .btn {
+  padding: 6px 14px;
+  font-size: 13px;
+}
+
+.pagination-info {
+  font-size: 13px;
+  color: #555;
 }
 
 table {

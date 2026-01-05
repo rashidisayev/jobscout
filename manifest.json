@@ -48,6 +48,7 @@
         "scripts/mustHaveExtractor.js",
         "scripts/matchingEngine.js",
         "scripts/embeddings.js",
+        "scripts/descriptionExtractor.js",
         "vendor/onnx/*.onnx",
         "vendor/onnx/*.wasm"
       ],

@@ -34,7 +34,6 @@ export function sanitizeHtml(html = '') {
   }
 
   return container.innerHTML.trim();
-  return container.innerHTML.trim();
 }
 
 function unwrapNode(node) {

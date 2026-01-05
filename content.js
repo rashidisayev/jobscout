@@ -1008,8 +1008,19 @@ async function getJobDescription(jobUrl) {
     const parser = new DOMParser();
     const doc = parser.parseFromString(html, 'text/html');
     
+    // Use shared description extractor
+    let descriptionExtractorModule;
+    try {
+      descriptionExtractorModule = await import(chrome.runtime.getURL('scripts/descriptionExtractor.js'));
+    } catch (error) {
+      console.warn('Failed to load description extractor, using fallback:', error);
+      descriptionExtractorModule = null;
+    }
+    
     const { sanitizeHtml } = await loadUtilsModule();
-    const rawHtml = extractDescriptionContent(doc);
+    const rawHtml = descriptionExtractorModule 
+      ? descriptionExtractorModule.extractDescriptionContent(doc)
+      : extractDescriptionContent(doc); // Fallback to local function
     const descriptionHtml = rawHtml ? sanitizeHtml(rawHtml) : '';
     
     if (!descriptionHtml) {
@@ -1027,195 +1038,26 @@ async function getJobDescription(jobUrl) {
       console.log(`Successfully extracted description (${descriptionHtml.length} chars) for ${jobUrl}`);
     }
     
-    // Extract title with multiple fallbacks
-    const getTitle = () => {
-      const titleSelectors = Array.isArray(SELECTORS.jobDetailTitle)
-        ? SELECTORS.jobDetailTitle
-        : [SELECTORS.jobDetailTitle];
-      for (const selector of titleSelectors) {
-        const element = doc.querySelector(selector);
-        if (element) {
-          const text = element.textContent?.trim();
-          if (text && text.length > 0) return text;
-        }
-      }
-      // Fallback: look for h1 tags
-      const h1 = doc.querySelector('h1');
-      if (h1) {
-        const text = h1.textContent?.trim();
-        if (text && text.length > 0) return text;
-      }
-      return null;
-    };
-    
-    // Extract company with multiple fallbacks
-    const getCompany = () => {
-      const falsePositives = new Set(['Page', 'View', 'Apply', 'Save', 'Share', 'More', 'Less', 'LinkedIn', 'Jobs']);
-      const isValidCompany = (text) => {
-        if (!text || text.length < 2 || text.length > 50) return false;
-        if (falsePositives.has(text.trim())) return false;
-        if (text.match(/^(Page|View|Apply|Save|Share|More|Less|\d+)$/i)) return false;
-        return /^[A-Z]/.test(text.trim());
+    // Use shared metadata extractors if available, otherwise use local fallback
+    let extractors;
+    if (descriptionExtractorModule && descriptionExtractorModule.createMetadataExtractors) {
+      extractors = descriptionExtractorModule.createMetadataExtractors(doc);
+    } else {
+      // Fallback: create simple extractors
+      extractors = {
+        getTitle: () => {
+          const h1 = doc.querySelector('h1');
+          return h1 ? h1.textContent?.trim() : null;
+        },
+        getCompany: () => null,
+        getLocation: () => null,
+        getDate: () => null
       };
-      
-      const companySelectors = Array.isArray(SELECTORS.jobDetailCompany)
-        ? SELECTORS.jobDetailCompany
-        : [SELECTORS.jobDetailCompany];
-      for (const selector of companySelectors) {
-        const element = doc.querySelector(selector);
-        if (element) {
-          const text = element.textContent.trim();
-          if (isValidCompany(text)) return text;
-        }
-      }
-      // Fallback: look for company links
-      const companyLinks = doc.querySelectorAll('a[href*="/company/"]');
-      for (const link of companyLinks) {
-        const text = link.textContent.trim();
-        if (isValidCompany(text)) return text;
-      }
-      // Fallback: try to find in page text
-      const pageText = doc.body.textContent || '';
-      const patterns = [
-        /Company[:\s]+([A-Z][a-zA-Z0-9\s&.,-]+)/i,
-        /at\s+([A-Z][a-zA-Z0-9\s&.,-]+?)(?:\s+·|\s+•|$)/,
-        /([A-Z][a-zA-Z0-9\s&.,-]+?)\s+·\s*[A-Z]/
-      ];
-      for (const pattern of patterns) {
-        const match = pageText.match(pattern);
-        if (match && match[1]) {
-          const candidate = match[1].trim();
-          if (isValidCompany(candidate)) {
-            return candidate;
-          }
-        }
-      }
-      return null;
-    };
-    
-    // Extract location with multiple fallbacks
-    const getLocation = () => {
-      const locationSelectors = Array.isArray(SELECTORS.jobDetailLocation)
-        ? SELECTORS.jobDetailLocation
-        : [SELECTORS.jobDetailLocation];
-      for (const selector of locationSelectors) {
-        const element = doc.querySelector(selector);
-        if (element) {
-          const text = element.textContent.trim();
-          if (text) return text;
-        }
-      }
-      // Fallback: look for location patterns in all elements
-      const allElements = doc.querySelectorAll('li, span, div, p');
-      for (const el of allElements) {
-        const text = el.textContent.trim();
-        if (!text || text.length > 100) continue;
-        if (text.match(/(Remote|On-site|Hybrid|Work from home|WFH)/i) ||
-            text.match(/^[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?,\s*[A-Z]{2}$/) ||
-            text.match(/^(United States|USA|Canada|UK|United Kingdom|Europe|Asia|Australia)$/i)) {
-          return text;
-        }
-      }
-      return null;
-    };
-    
-    // Extract date - simple approach (similar to location)
-    const getDate = () => {
-      const dateSelectors = Array.isArray(SELECTORS.jobDetailDate)
-        ? SELECTORS.jobDetailDate
-        : [SELECTORS.jobDetailDate];
-      for (const selector of dateSelectors) {
-        const element = doc.querySelector(selector);
-        if (element) {
-          const text = element.textContent?.trim();
-          const datetime = element.getAttribute('datetime');
-          if (datetime) {
-            try {
-              const date = new Date(datetime);
-              const now = new Date();
-              const diffDays = Math.floor((now - date) / (1000 * 60 * 60 * 24));
-              if (diffDays === 0) return 'Today';
-              else if (diffDays === 1) return '1 day ago';
-              else if (diffDays < 7) return `${diffDays} days ago`;
-              else if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
-              else return `${Math.floor(diffDays / 30)} months ago`;
-            } catch (e) {
-              if (text) return text;
-            }
-          } else if (text) {
-            // Extract date from "Reposted/Posted X weeks ago" format
-            const dateMatch = text.match(/(?:reposted|posted)\s+(.+)/i);
-            if (dateMatch && dateMatch[1]) {
-              return dateMatch[1].trim();
-            }
-            return text;
-          }
-        }
-      }
-      
-      // Fallback: look for all time elements with datetime
-      const timeElements = doc.querySelectorAll('time[datetime]');
-      for (const el of timeElements) {
-        const datetime = el.getAttribute('datetime');
-        if (datetime) {
-          try {
-            const date = new Date(datetime);
-            const now = new Date();
-            const diffDays = Math.floor((now - date) / (1000 * 60 * 60 * 24));
-            if (diffDays === 0) return 'Today';
-            else if (diffDays === 1) return '1 day ago';
-            else if (diffDays < 7) return `${diffDays} days ago`;
-            else if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
-            else return `${Math.floor(diffDays / 30)} months ago`;
-          } catch (e) {
-            const text = el.textContent?.trim();
-            if (text) {
-              // Extract date from "Reposted/Posted X weeks ago" format
-              const dateMatch = text.match(/(?:reposted|posted)\s+(.+)/i);
-              if (dateMatch && dateMatch[1]) {
-                return dateMatch[1].trim();
-              }
-              return text;
-            }
-          }
-        } else {
-          const text = el.textContent?.trim();
-          if (text) {
-            // Extract date from "Reposted/Posted X weeks ago" format
-            const dateMatch = text.match(/(?:reposted|posted)\s+(.+)/i);
-            if (dateMatch && dateMatch[1]) {
-              return dateMatch[1].trim();
-            }
-            return text;
-          }
-        }
-      }
-      
-      // Fallback: look for all time elements (even without datetime)
-      const allTimeElements = doc.querySelectorAll('time');
-      for (const el of allTimeElements) {
-        const text = el.textContent?.trim();
-        if (text) {
-          // Extract date from "Reposted/Posted X weeks ago" format
-          const dateMatch = text.match(/(?:reposted|posted)\s+(.+)/i);
-          if (dateMatch && dateMatch[1]) {
-            return dateMatch[1].trim();
-          }
-          return text;
-        }
-      }
-      
-      return null;
-    };
+    }
     
     return {
       descriptionHtml,
-      extractors: {
-        getTitle: getTitle,
-        getCompany: getCompany,
-        getLocation: getLocation,
-        getDate: getDate
-      }
+      extractors
     };
   } catch (error) {
     console.error('Error fetching job description:', error);

@@ -5,6 +5,11 @@
 // The new hybrid matching system is available in options.js context where imports work
 // For background worker, we use the enhanced legacy matching with better keyword extraction
 
+// Configuration constants (matching scripts/config.js)
+const MIN_SCORE_THRESHOLD = 0.05; // 5% minimum match score
+const MAX_PAGES_PER_URL = 5;
+const MAX_RECENT_JOB_IDS = 2000; // Maximum job IDs to keep in memory
+
 const DEFAULT_SETTINGS = {
   searchUrls: [],
   scanInterval: 60, // minutes
@@ -171,8 +176,8 @@ async function performScan() {
         currentPage: 0
       });
       
-      // Process up to 5 pages (start=0, 25, 50, 75, 100)
-      const pageStarts = [0, 25, 50, 75, 100];
+      // Process up to MAX_PAGES_PER_URL pages (start=0, 25, 50, 75, 100)
+      const pageStarts = Array.from({ length: MAX_PAGES_PER_URL }, (_, i) => i * 25);
       
       for (let pageIndex = 0; pageIndex < pageStarts.length; pageIndex++) {
         const start = pageStarts[pageIndex];
@@ -293,6 +298,48 @@ async function performScan() {
   // Update last scan time
   await chrome.storage.local.set({ lastScanTime: Date.now() });
   
+  // Archive old jobs periodically (every 10 scans or so)
+  // Use a simple counter to avoid archiving on every scan
+  const { archiveCounter = 0 } = await chrome.storage.local.get(['archiveCounter']);
+  if (archiveCounter >= 10) {
+    // Archive jobs older than 90 days (using config constant)
+    const ARCHIVAL_DAYS = 90;
+    const { jobs = [] } = await chrome.storage.local.get(['jobs']);
+    const cutoffDate = Date.now() - (ARCHIVAL_DAYS * 24 * 60 * 60 * 1000);
+    const jobsToArchive = [];
+    const jobsToKeep = [];
+    
+    for (const job of jobs) {
+      const jobDate = job.foundAt || job.scrapedAt || 0;
+      if (jobDate < cutoffDate) {
+        jobsToArchive.push(job);
+      } else {
+        jobsToKeep.push(job);
+      }
+    }
+    
+    if (jobsToArchive.length > 0) {
+      const { archivedJobs = [] } = await chrome.storage.local.get(['archivedJobs']);
+      const updatedArchived = [...archivedJobs, ...jobsToArchive];
+      const maxArchived = 1000;
+      const trimmedArchived = updatedArchived.length > maxArchived
+        ? updatedArchived.slice(-maxArchived)
+        : updatedArchived;
+      
+      await chrome.storage.local.set({
+        jobs: jobsToKeep,
+        archivedJobs: trimmedArchived,
+        archiveCounter: 0 // Reset counter
+      });
+      
+      console.log(`Archived ${jobsToArchive.length} old jobs`);
+    } else {
+      await chrome.storage.local.set({ archiveCounter: 0 });
+    }
+  } else {
+    await chrome.storage.local.set({ archiveCounter: archiveCounter + 1 });
+  }
+  
   // Update badge
   await updateBadge();
 }
@@ -360,8 +407,7 @@ async function handleJobResults(jobs = [], options = {}) {
     if (!idToIndex.has(jobId)) {
       const enriched = await enrichJobMatchData(incomingRecord, validResumes);
       
-      // Filter out jobs with very low scores (below 5% threshold)
-      const MIN_SCORE_THRESHOLD = 0.05;
+      // Filter out jobs with very low scores (below threshold)
       if (validResumes.length > 0 && enriched.matchScore < MIN_SCORE_THRESHOLD) {
         console.log(`Excluding job "${enriched.title}" - score ${enriched.matchScore.toFixed(4)} below threshold ${MIN_SCORE_THRESHOLD}`);
         // Mark as excluded but don't add to jobs list
@@ -392,8 +438,7 @@ async function handleJobResults(jobs = [], options = {}) {
     if (shouldRecalculate) {
       const updated = await enrichJobMatchData(mergedRecord, validResumes);
       
-      // Filter out jobs with very low scores (below 5% threshold)
-      const MIN_SCORE_THRESHOLD = 0.05;
+      // Filter out jobs with very low scores (below threshold)
       if (validResumes.length > 0 && updated.matchScore < MIN_SCORE_THRESHOLD) {
         console.log(`Excluding existing job "${updated.title}" - score ${updated.matchScore.toFixed(4)} below threshold ${MIN_SCORE_THRESHOLD}`);
         // Mark as excluded and remove from list
@@ -416,7 +461,6 @@ async function handleJobResults(jobs = [], options = {}) {
   }
   
   // Clean up: Remove any existing jobs that are now excluded (score too low)
-  const MIN_SCORE_THRESHOLD = 0.05;
   const cleanedJobs = mergedJobs.filter(job => {
     // Remove jobs marked as excluded
     if (job.excluded) {
@@ -431,9 +475,15 @@ async function handleJobResults(jobs = [], options = {}) {
     return true;
   });
   
+  // Limit lastSeenJobIds size to prevent unbounded growth
+  const lastSeenArray = Array.from(lastSeenSet);
+  const trimmedLastSeen = lastSeenArray.length > MAX_RECENT_JOB_IDS
+    ? lastSeenArray.slice(-MAX_RECENT_JOB_IDS) // Keep most recent
+    : lastSeenArray;
+  
   await chrome.storage.local.set({
     jobs: cleanedJobs,
-    lastSeenJobIds: Array.from(lastSeenSet)
+    lastSeenJobIds: trimmedLastSeen
   });
   
   await updateBadge();
@@ -945,8 +995,6 @@ async function matchResumeToJob(jobDescription, resumes, jobTitle = '') {
   }
   
   // Minimum score threshold - filter out very low relevance jobs
-  const MIN_SCORE_THRESHOLD = 0.05; // 5% minimum match score (0.05 = 5%)
-  
   if (bestMatch.score < MIN_SCORE_THRESHOLD) {
     if (bestMatch.filename) {
       console.log('Job score below threshold, excluding:', {
@@ -1032,7 +1080,7 @@ function hashJobUrl(url) {
   for (let i = 0; i < url.length; i++) {
     const char = url.charCodeAt(i);
     hash = ((hash << 5) - hash) + char;
-    hash = hash & hash; // Convert to 32bit integer
+    hash = hash | 0; // Convert to 32bit integer
   }
   return Math.abs(hash).toString();
 }

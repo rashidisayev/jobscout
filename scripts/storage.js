@@ -153,3 +153,67 @@ export async function updateJob(job) {
   return jobs[index];
 }
 
+/**
+ * Archive old jobs to prevent unbounded storage growth
+ * @param {number} daysToArchive - Archive jobs older than this many days (default: 90)
+ * @returns {Promise<{archived: number, remaining: number}>}
+ */
+export async function archiveOldJobs(daysToArchive = 90) {
+  const { jobs = [], archivedJobs = [] } = await chrome.storage.local.get(['jobs', 'archivedJobs']);
+  
+  if (jobs.length === 0) {
+    return { archived: 0, remaining: 0 };
+  }
+  
+  const cutoffDate = Date.now() - (daysToArchive * 24 * 60 * 60 * 1000);
+  const jobsToArchive = [];
+  const jobsToKeep = [];
+  
+  for (const job of jobs) {
+    const jobDate = job.foundAt || job.scrapedAt || 0;
+    if (jobDate < cutoffDate) {
+      jobsToArchive.push(job);
+    } else {
+      jobsToKeep.push(job);
+    }
+  }
+  
+  if (jobsToArchive.length > 0) {
+    // Add archived jobs to archive list (limit archive size to prevent growth)
+    const updatedArchived = [...archivedJobs, ...jobsToArchive];
+    const maxArchived = 1000; // Keep max 1000 archived jobs
+    const trimmedArchived = updatedArchived.length > maxArchived
+      ? updatedArchived.slice(-maxArchived) // Keep most recent archived
+      : updatedArchived;
+    
+    await chrome.storage.local.set({
+      jobs: jobsToKeep,
+      archivedJobs: trimmedArchived
+    });
+    
+    console.log(`Archived ${jobsToArchive.length} old jobs (older than ${daysToArchive} days)`);
+  }
+  
+  return {
+    archived: jobsToArchive.length,
+    remaining: jobsToKeep.length
+  };
+}
+
+/**
+ * Get archived jobs
+ * @returns {Promise<Job[]>}
+ */
+export async function getArchivedJobs() {
+  const { archivedJobs = [] } = await chrome.storage.local.get(['archivedJobs']);
+  return archivedJobs;
+}
+
+/**
+ * Clear archived jobs
+ * @returns {Promise<void>}
+ */
+export async function clearArchivedJobs() {
+  await chrome.storage.local.set({ archivedJobs: [] });
+}
+

@@ -1,7 +1,14 @@
 // Options page script for JobScout
 
-import { getJobById } from './scripts/storage.js';
+import { getJobById, archiveOldJobs } from './scripts/storage.js';
 import { sanitizeHtml } from './scripts/utils.js';
+import { 
+  MAX_SEARCH_URLS, 
+  SCAN_INTERVAL, 
+  PAGINATION,
+  RESUME as RESUME_CONFIG,
+  ARCHIVAL
+} from './scripts/config.js';
 
 const DESCRIPTION_SELECTORS = [
   'article.jobs-description__container',
@@ -14,6 +21,8 @@ const DESCRIPTION_SELECTORS = [
   '.jobs-description__text-container'
 ];
 
+const RESULTS_PER_PAGE = PAGINATION.RESULTS_PER_PAGE;
+
 let modal = null;
 let modalTitle = null;
 let modalMeta = null;
@@ -21,6 +30,7 @@ let modalBody = null;
 let modalViewBtn = null;
 let modalFetchBtn = null;
 let activeJobId = null;
+let currentPage = 1;
 
 document.addEventListener('DOMContentLoaded', async () => {
   modal = document.getElementById('job-modal');
@@ -53,8 +63,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('exportCsv').addEventListener('click', exportCsv);
   document.getElementById('clearAllJobs').addEventListener('click', clearAllJobs);
   document.getElementById('scanTabNow').addEventListener('click', scanTabNow);
-  document.getElementById('sortBy').addEventListener('change', loadResults);
-  document.getElementById('filterText').addEventListener('input', loadResults);
+  document.getElementById('sortBy').addEventListener('change', () => {
+    currentPage = 1;
+    loadResults();
+  });
+  document.getElementById('filterText').addEventListener('input', () => {
+    currentPage = 1;
+    loadResults();
+  });
   
   // Listen for storage changes to update live status and last update time
   chrome.storage.onChanged.addListener((changes, areaName) => {
@@ -175,8 +191,8 @@ async function addSearchUrl() {
   const settings = await chrome.storage.local.get(['searchUrls']);
   const urls = settings.searchUrls || [];
   
-  if (urls.length >= 10) {
-    alert('Maximum 10 search URLs allowed');
+  if (urls.length >= MAX_SEARCH_URLS) {
+    alert(`Maximum ${MAX_SEARCH_URLS} search URLs allowed`);
     return;
   }
   
@@ -254,8 +270,8 @@ async function handleResumeUpload(event, index) {
   const file = event.target.files[0];
   if (!file) return;
   
-  if (file.size > 10 * 1024 * 1024) { // 10MB limit
-    alert('File size must be less than 10MB');
+  if (file.size > RESUME_CONFIG.MAX_FILE_SIZE_MB * 1024 * 1024) {
+    alert(`File size must be less than ${RESUME_CONFIG.MAX_FILE_SIZE_MB}MB`);
     return;
   }
   
@@ -276,7 +292,7 @@ async function handleResumeUpload(event, index) {
       throw new Error('No text content extracted from the file. The file may be corrupted or in an unsupported format.');
     }
     
-    if (text.trim().length < 10) {
+    if (text.trim().length < RESUME_CONFIG.MIN_TEXT_LENGTH) {
       throw new Error('Extracted text is too short. The file may not contain readable text or may be corrupted.');
     }
     
@@ -347,8 +363,8 @@ async function saveSettings() {
   const scanInterval = parseInt(document.getElementById('scanInterval').value);
   const onlyNewRoles = document.getElementById('onlyNewRoles').checked;
   
-  if (scanInterval < 15 || scanInterval > 1440) {
-    alert('Scan interval must be between 15 and 1440 minutes');
+  if (scanInterval < SCAN_INTERVAL.MIN || scanInterval > SCAN_INTERVAL.MAX) {
+    alert(`Scan interval must be between ${SCAN_INTERVAL.MIN} and ${SCAN_INTERVAL.MAX} minutes`);
     return;
   }
   
@@ -366,6 +382,15 @@ async function saveSettings() {
 
 // Results display
 async function loadResults() {
+  // Archive old jobs periodically (every 20 loads)
+  const { archiveLoadCounter = 0 } = await chrome.storage.local.get(['archiveLoadCounter']);
+  if (archiveLoadCounter >= 20) {
+    await archiveOldJobsIfNeeded();
+    await chrome.storage.local.set({ archiveLoadCounter: 0 });
+  } else {
+    await chrome.storage.local.set({ archiveLoadCounter: archiveLoadCounter + 1 });
+  }
+  
   const settings = await chrome.storage.local.get(['jobs', 'lastScanTime']);
   let jobs = settings.jobs || [];
   
@@ -412,7 +437,24 @@ async function loadResults() {
     }
   });
   
-  displayResults(jobs);
+  const totalJobs = jobs.length;
+  
+  if (totalJobs === 0) {
+    currentPage = 1;
+    updateResultsSummary(0, 0, 0);
+    updatePaginationControls(1, 0);
+    displayResults([]);
+    return;
+  }
+  
+  const totalPages = Math.max(1, Math.ceil(totalJobs / RESULTS_PER_PAGE));
+  currentPage = Math.min(Math.max(currentPage, 1), totalPages);
+  const startIndex = (currentPage - 1) * RESULTS_PER_PAGE;
+  const paginatedJobs = jobs.slice(startIndex, startIndex + RESULTS_PER_PAGE);
+  
+  displayResults(paginatedJobs);
+  updateResultsSummary(startIndex + 1, Math.min(startIndex + paginatedJobs.length, totalJobs), totalJobs);
+  updatePaginationControls(totalPages, totalJobs);
 }
 
 function updateLastUpdateTime(lastScanTime) {
@@ -594,6 +636,60 @@ function displayResults(jobs) {
   if (helpIcon) {
     helpIcon.addEventListener('click', showScoreInfoModal);
   }
+}
+
+function updateResultsSummary(start, end, total) {
+  const summaryEl = document.getElementById('resultsSummary');
+  if (!summaryEl) return;
+  
+  if (total === 0) {
+    summaryEl.textContent = 'No jobs to display';
+    return;
+  }
+  
+  summaryEl.textContent = `Showing ${start}-${end} of ${total} jobs`;
+}
+
+function updatePaginationControls(totalPages, totalJobs) {
+  const paginationDiv = document.getElementById('paginationControls');
+  if (!paginationDiv) return;
+  
+  if (totalJobs <= RESULTS_PER_PAGE) {
+    paginationDiv.innerHTML = '';
+    paginationDiv.classList.add('hidden');
+    return;
+  }
+  
+  paginationDiv.classList.remove('hidden');
+  paginationDiv.innerHTML = '';
+  
+  const prevBtn = document.createElement('button');
+  prevBtn.textContent = 'Previous';
+  prevBtn.className = 'btn btn-secondary';
+  prevBtn.disabled = currentPage === 1;
+  prevBtn.addEventListener('click', () => {
+    if (currentPage > 1) {
+      currentPage--;
+      loadResults();
+    }
+  });
+  
+  const nextBtn = document.createElement('button');
+  nextBtn.textContent = 'Next';
+  nextBtn.className = 'btn btn-secondary';
+  nextBtn.disabled = currentPage === totalPages;
+  nextBtn.addEventListener('click', () => {
+    if (currentPage < totalPages) {
+      currentPage++;
+      loadResults();
+    }
+  });
+  
+  const info = document.createElement('span');
+  info.className = 'pagination-info';
+  info.textContent = `Page ${currentPage} of ${totalPages}`;
+  
+  paginationDiv.append(prevBtn, info, nextBtn);
 }
 
 export async function onSeeDescription(jobId) {
@@ -1641,6 +1737,18 @@ async function clearAllJobs() {
   } catch (error) {
     console.error('Error clearing jobs:', error);
     alert('Error clearing jobs. Please try again.');
+  }
+}
+
+// Archive old jobs (called automatically on loadResults or can be called manually)
+async function archiveOldJobsIfNeeded() {
+  try {
+    const result = await archiveOldJobs(ARCHIVAL.DAYS_TO_ARCHIVE);
+    if (result.archived > 0) {
+      console.log(`Archived ${result.archived} old jobs, ${result.remaining} remaining`);
+    }
+  } catch (error) {
+    console.error('Error archiving old jobs:', error);
   }
 }
 
