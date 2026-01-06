@@ -195,7 +195,10 @@ async function scrapeJobs(onlyNew = true, lastSeenIds = [], pageIndex = 0) {
   
   // Check if we're on a search results page
   if (!window.location.href.includes('/jobs/search')) {
-    console.log('Not on a search results page');
+    // Only log if this is an actual scrape request (not just script loading)
+    if (pageIndex >= 0) {
+      console.debug('Not on a search results page, skipping scrape');
+    }
     return jobs;
   }
   
@@ -270,7 +273,12 @@ async function scrapeJobs(onlyNew = true, lastSeenIds = [], pageIndex = 0) {
           // Use enhanced company extraction
           let company = 'Unknown';
           if (jobExtractorModule && jobExtractorModule.extractCompany) {
-            company = jobExtractorModule.extractCompany(card, pageJsonLd, title);
+            try {
+              company = jobExtractorModule.extractCompany(card, pageJsonLd, title);
+            } catch (error) {
+              console.error('Error in extractCompany:', error);
+              company = findElement(SELECTORS.jobCompany, card)?.textContent?.trim() || 'Unknown';
+            }
           } else {
             company = findElement(SELECTORS.jobCompany, card)?.textContent?.trim() || 'Unknown';
           }
@@ -318,7 +326,16 @@ async function scrapeJobs(onlyNew = true, lastSeenIds = [], pageIndex = 0) {
       // Use enhanced company extraction
       let company = 'Unknown';
       if (jobExtractorModule && jobExtractorModule.extractCompany) {
-        company = jobExtractorModule.extractCompany(card, pageJsonLd, title);
+        try {
+          company = jobExtractorModule.extractCompany(card, pageJsonLd, title);
+        } catch (error) {
+          console.error('Error in extractCompany:', error);
+          // Fallback to original method
+          const companyElement = findElement(SELECTORS.jobCompany, card);
+          if (companyElement) {
+            company = companyElement.textContent.trim() || 'Unknown';
+          }
+        }
       } else {
         // Fallback to original method
         const companyElement = findElement(SELECTORS.jobCompany, card);

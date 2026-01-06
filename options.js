@@ -501,7 +501,7 @@ function displayResults(jobs) {
     const row = document.createElement('tr');
     
     const titleCell = document.createElement('td');
-    titleCell.textContent = job.title || 'N/A';
+    titleCell.textContent = deduplicateTitle(job.title) || 'N/A';
     
     const companyCell = document.createElement('td');
     companyCell.textContent = job.company && job.company !== 'Unknown' ? job.company : 'N/A';
@@ -702,7 +702,7 @@ export async function onSeeDescription(jobId) {
 
 function populateModal(job) {
   if (!modal || !modalTitle || !modalMeta || !modalBody) return;
-  const title = job.title || 'Unknown title';
+  const title = deduplicateTitle(job.title) || 'Unknown title';
   const company = job.company && job.company !== 'Unknown' ? job.company : 'Unknown company';
   modalTitle.textContent = `${title} — ${company}`;
   
@@ -888,7 +888,7 @@ function showMatchExplanation(job, match) {
         ` : ''}
         
         <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #ddd; font-size: 12px; color: #666;">
-          <strong>Job:</strong> ${job.title || 'N/A'} at ${job.company || 'N/A'}<br>
+          <strong>Job:</strong> ${deduplicateTitle(job.title) || 'N/A'} at ${job.company || 'N/A'}<br>
           <strong>Score:</strong> ${((match.score || 0) * 100).toFixed(1)}%
         </div>
       </div>
@@ -1028,6 +1028,127 @@ async function archiveOldJobsIfNeeded() {
 }
 
 // Utility functions
+function deduplicateTitle(title) {
+  if (!title || typeof title !== 'string') return title;
+  
+  // Check if title ends with "with verification" and handle it separately
+  const withVerificationPattern = /\s+with\s+verification\s*$/i;
+  const hasVerification = withVerificationPattern.test(title);
+  let verificationSuffix = '';
+  
+  if (hasVerification) {
+    // Extract the "with verification" suffix (preserve original casing)
+    const match = title.match(/\s+(with\s+verification)\s*$/i);
+    if (match) {
+      verificationSuffix = ' ' + match[1]; // Keep original casing
+      title = title.replace(withVerificationPattern, '').trim();
+    }
+  }
+  
+  // First, normalize spaces and handle cases where duplicates have no space between them
+  // Add space before capital letters that follow closing parentheses/brackets (common pattern)
+  let normalized = title.trim()
+    .replace(/([)\]}])([A-Z])/g, '$1 $2') // Add space after )]}] before capital letter
+    .replace(/\s+/g, ' ') // Normalize multiple spaces to single space
+    .trim();
+  
+  // Remove duplicate consecutive words first
+  const words = normalized.split(/\s+/);
+  const deduplicated = [];
+  
+  for (let i = 0; i < words.length; i++) {
+    // Check if current word is the same as the previous one
+    if (i === 0 || words[i] !== words[i - 1]) {
+      deduplicated.push(words[i]);
+    }
+  }
+  
+  let result = deduplicated.join(' ');
+  
+  // Check for full phrase repetition - most common case
+  // Check if the entire string is duplicated (split in half)
+  const totalLength = result.length;
+  if (totalLength >= 4 && totalLength % 2 === 0) {
+    const midPoint = totalLength / 2;
+    const firstHalf = result.substring(0, midPoint).trim();
+    const secondHalf = result.substring(midPoint).trim();
+    
+    // Check exact match
+    if (firstHalf === secondHalf && firstHalf.length > 0) {
+      return firstHalf + verificationSuffix;
+    }
+    
+    // Check with potential space differences
+    if (firstHalf.replace(/\s+/g, ' ') === secondHalf.replace(/\s+/g, ' ') && firstHalf.length > 0) {
+      return firstHalf + verificationSuffix;
+    }
+  }
+  
+  // Check word-by-word for duplication (handles cases where spacing might differ)
+  const wordsArray = result.split(/\s+/);
+  const totalWords = wordsArray.length;
+  
+  // Check if the title is exactly duplicated word-wise (split in half)
+  if (totalWords >= 2 && totalWords % 2 === 0) {
+    const midPoint = totalWords / 2;
+    const firstHalf = wordsArray.slice(0, midPoint).join(' ');
+    const secondHalf = wordsArray.slice(midPoint).join(' ');
+    
+    if (firstHalf === secondHalf && firstHalf.length > 0) {
+      return firstHalf + verificationSuffix;
+    }
+  }
+  
+  // Check for partial phrase repetition at the end
+  // Look for patterns where a phrase at the beginning repeats at the end
+  if (wordsArray.length > 2) {
+    // Try different phrase lengths (from 2 words to half the title)
+    const maxPhraseLength = Math.floor(wordsArray.length / 2);
+    
+    for (let phraseLength = maxPhraseLength; phraseLength >= 2; phraseLength--) {
+      const startPhrase = wordsArray.slice(0, phraseLength).join(' ');
+      const endPhrase = wordsArray.slice(-phraseLength).join(' ');
+      
+      if (startPhrase === endPhrase && startPhrase.length > 0) {
+        // Remove the duplicate at the end
+        return wordsArray.slice(0, -phraseLength).join(' ') + verificationSuffix;
+      }
+    }
+  }
+  
+  // Also check for repetition with separators (like "Title - Title")
+  // Split by common separators and check if parts repeat
+  const separatorPattern = /\s*[—–-]\s*/;
+  if (separatorPattern.test(result)) {
+    const parts = result.split(separatorPattern);
+    if (parts.length >= 2) {
+      // Check if any part is repeated
+      const uniqueParts = [];
+      for (const part of parts) {
+        const trimmedPart = part.trim();
+        if (trimmedPart && !uniqueParts.includes(trimmedPart)) {
+          uniqueParts.push(trimmedPart);
+        }
+      }
+      
+      // If we removed duplicates, reconstruct
+      if (uniqueParts.length < parts.length) {
+        return uniqueParts.join(' — ') + verificationSuffix;
+      }
+    }
+  }
+  
+  const finalResult = result.trim();
+  
+  // Only add verification suffix if it's not already in the result
+  // (in case "with verification" was part of the duplicated phrase)
+  if (verificationSuffix && !finalResult.toLowerCase().endsWith('with verification')) {
+    return finalResult + verificationSuffix;
+  }
+  
+  return finalResult;
+}
+
 function formatFileSize(bytes) {
   if (bytes < 1024) return bytes + ' B';
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
