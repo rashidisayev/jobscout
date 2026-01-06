@@ -589,6 +589,23 @@ async function scrapeJobs(onlyNew = true, lastSeenIds = [], pageIndex = 0) {
         const cardText = card.innerText || card.textContent || '';
         const cardHTML = card.innerHTML || '';
         
+        // Helper function to validate company names
+        const isValidCompany = (text) => {
+          if (!text || text.length < 2 || text.length > 100) return false;
+          const falsePositives = new Set([
+            'Page', 'View', 'Apply', 'Save', 'Share', 'More', 'Less', 'Show', 'Hide',
+            'LinkedIn', 'Jobs', 'Search', 'Filter', 'Sort', 'Results', 'Next', 'Previous',
+            'Today', 'Yesterday', 'Remote', 'On-site', 'Hybrid', 'Full-time', 'Part-time',
+            'Contract', 'Internship', 'Temporary', 'Permanent'
+          ]);
+          if (falsePositives.has(text.trim())) return false;
+          if (text.match(/^(Page|View|Apply|Save|Share|More|Less|\d+)$/i)) return false;
+          if (text.match(/^(the|and|or|but|for|with|from|this|that|these|those)$/i)) return false;
+          if (!/^[A-Z]/.test(text.trim())) return false;
+          if (title && text.trim().toLowerCase() === title.trim().toLowerCase()) return false;
+          return true;
+        };
+        
         // More aggressive company extraction
         if (company === 'Unknown' || !isValidCompany(company)) {
           // Look for company name patterns in the card
