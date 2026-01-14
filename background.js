@@ -168,12 +168,38 @@ async function performScan() {
     await new Promise(resolve => setTimeout(resolve, 3000));
   }
   
+  // Helper to normalize search URL items (supports both string and object formats)
+  function normalizeSearchUrlItem(item) {
+    if (!item) {
+      return { url: '', location: '', keyword: '' };
+    }
+    
+    if (typeof item === 'string') {
+      return { url: item, location: '', keyword: '' };
+    }
+    
+    const {
+      url = '',
+      location = '',
+      keyword = ''
+    } = item;
+    
+    return {
+      url,
+      location: location || '',
+      keyword: keyword || ''
+    };
+  }
+  
   // Process each search URL
-  for (const searchUrlItem of settings.searchUrls) {
+  for (let searchIndex = 0; searchIndex < settings.searchUrls.length; searchIndex++) {
+    const searchUrlItem = settings.searchUrls[searchIndex];
+    const normalizedSearch = normalizeSearchUrlItem(searchUrlItem);
+    const searchUrl = normalizedSearch.url;
+    const searchLocationLabel = normalizedSearch.location;
+    const searchKeywordLabel = normalizedSearch.keyword;
+    
     try {
-      // Handle both old string format and new object format
-      const searchUrl = typeof searchUrlItem === 'string' ? searchUrlItem : searchUrlItem.url;
-      
       if (!searchUrl) continue; // Skip invalid entries
       
       await updateRunState({
@@ -227,7 +253,9 @@ async function performScan() {
                 action: 'scrapeJobs',
                 onlyNew: settings.onlyNewRoles,
                 lastSeenIds: lastSeenIds,
-                pageIndex: pageIndex
+                pageIndex: pageIndex,
+                searchLocationLabel,
+                searchKeywordLabel
               });
             } catch (msgError) {
               retries--;

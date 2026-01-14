@@ -177,7 +177,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     scrapeJobs(
       request.onlyNew, 
       request.lastSeenIds || [],
-      request.pageIndex || 0
+      request.pageIndex || 0,
+      request.searchLocationLabel || '',
+      request.searchKeywordLabel || ''
     ).then(results => {
       sendResponse({ jobs: results });
     }).catch(error => {
@@ -189,7 +191,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 });
 
 // Main scraping function with pagination support
-async function scrapeJobs(onlyNew = true, lastSeenIds = [], pageIndex = 0) {
+// searchLocationLabel/searchKeywordLabel come from the saved search URL metadata
+async function scrapeJobs(
+  onlyNew = true,
+  lastSeenIds = [],
+  pageIndex = 0,
+  searchLocationLabel = '',
+  searchKeywordLabel = ''
+) {
   const jobs = [];
   const seenIds = new Set(lastSeenIds);
   
@@ -290,7 +299,9 @@ async function scrapeJobs(onlyNew = true, lastSeenIds = [], pageIndex = 0) {
             title,
             company,
             location: findElement(SELECTORS.jobLocation, card)?.textContent?.trim() || 'Unknown',
-            datePosted: datePosted || 'Unknown'
+            datePosted: datePosted || 'Unknown',
+            searchLocationLabel,
+            searchKeywordLabel
           });
         }
         continue;
@@ -750,7 +761,9 @@ async function scrapeJobs(onlyNew = true, lastSeenIds = [], pageIndex = 0) {
         title,
         company: company || 'Unknown',
         location: location || 'Unknown',
-        datePosted: datePosted || 'Unknown'
+        datePosted: datePosted || 'Unknown',
+        searchLocationLabel,
+        searchKeywordLabel
       };
       
       jobLinks.push(jobData);
@@ -777,7 +790,10 @@ async function scrapeJobs(onlyNew = true, lastSeenIds = [], pageIndex = 0) {
       datePosted: finalDatePosted,
       descriptionHtml: '',
       needsFetch: true,
-      scrapedAt: Date.now()
+      scrapedAt: Date.now(),
+      // Preserve search URL labels on the final job object so they can be shown in the options UI
+      searchLocationLabel: jobInfo.searchLocationLabel || '',
+      searchKeywordLabel: jobInfo.searchKeywordLabel || ''
     };
     
     // Debug: log if date is still Unknown

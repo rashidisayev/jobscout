@@ -697,7 +697,49 @@ function displayResults(jobs) {
     const actions = document.createElement('div');
     actions.className = 'job-actions';
     actions.style.display = 'flex';
+    actions.style.alignItems = 'center';
     actions.style.gap = '8px';
+    actions.style.flexWrap = 'wrap';
+    
+    // Labels container for search URL metadata (location/keyword)
+    const labelsContainer = document.createElement('div');
+    labelsContainer.style.display = 'flex';
+    labelsContainer.style.gap = '6px';
+    labelsContainer.style.alignItems = 'center';
+    
+    // Location label (green) from the saved search URL
+    if (job.searchLocationLabel && String(job.searchLocationLabel).trim()) {
+      const locationLabel = document.createElement('span');
+      locationLabel.textContent = job.searchLocationLabel;
+      locationLabel.style.display = 'inline-block';
+      locationLabel.style.padding = '4px 8px';
+      locationLabel.style.borderRadius = '12px';
+      locationLabel.style.fontSize = '12px';
+      locationLabel.style.fontWeight = '500';
+      locationLabel.style.backgroundColor = '#4CAF50'; // Green
+      locationLabel.style.color = 'white';
+      locationLabel.style.whiteSpace = 'nowrap';
+      labelsContainer.appendChild(locationLabel);
+    }
+    
+    // Keyword label (yellow) from the saved search URL
+    if (job.searchKeywordLabel && String(job.searchKeywordLabel).trim()) {
+      const keywordLabel = document.createElement('span');
+      keywordLabel.textContent = job.searchKeywordLabel;
+      keywordLabel.style.display = 'inline-block';
+      keywordLabel.style.padding = '4px 8px';
+      keywordLabel.style.borderRadius = '12px';
+      keywordLabel.style.fontSize = '12px';
+      keywordLabel.style.fontWeight = '500';
+      keywordLabel.style.backgroundColor = '#FFC107'; // Yellow
+      keywordLabel.style.color = '#333';
+      keywordLabel.style.whiteSpace = 'nowrap';
+      labelsContainer.appendChild(keywordLabel);
+    }
+    
+    if (labelsContainer.children.length > 0) {
+      actions.appendChild(labelsContainer);
+    }
     
     // Add "Apply" button to open job URL
     const applyBtn = document.createElement('button');
