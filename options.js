@@ -39,8 +39,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   
   // Event listeners
   document.getElementById('addSearchUrl').addEventListener('click', addSearchUrl);
-  document.getElementById('newSearchUrl').addEventListener('keypress', (e) => {
-    if (e.key === 'Enter') addSearchUrl();
+  // Allow Enter key to submit from any of the input fields
+  ['newSearchUrl', 'newSearchLocation', 'newSearchKeyword'].forEach(id => {
+    document.getElementById(id).addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') addSearchUrl();
+    });
   });
   
   document.getElementById('saveSettings').addEventListener('click', saveSettings);
@@ -116,10 +119,54 @@ function initializeTabs() {
   });
 }
 
+// Helper function to normalize search URL format (support both old string and new object format)
+function normalizeSearchUrl(item) {
+  if (typeof item === 'string') {
+    return { url: item, location: '', keyword: '' };
+  }
+  return {
+    url: item.url || '',
+    location: item.location || '',
+    keyword: item.keyword || ''
+  };
+}
+
+// Debounce function for autosave
+function debounce(func, wait) {
+  let timeout;
+  return function executedFunction(...args) {
+    const later = () => {
+      clearTimeout(timeout);
+      func(...args);
+    };
+    clearTimeout(timeout);
+    timeout = setTimeout(later, wait);
+  };
+}
+
+// Autosave function for search URL fields
+const autosaveSearchUrl = debounce(async (index, url, location, keyword) => {
+  const settings = await chrome.storage.local.get(['searchUrls']);
+  const urls = settings.searchUrls || [];
+  
+  if (index >= 0 && index < urls.length) {
+    urls[index] = { url: url.trim(), location: location.trim(), keyword: keyword.trim() };
+    await chrome.storage.local.set({ searchUrls: urls });
+  }
+}, 500); // Save 500ms after user stops typing
+
 // Search URLs management
 async function loadSearchUrls() {
   const settings = await chrome.storage.local.get(['searchUrls']);
-  const urls = settings.searchUrls || [];
+  let urls = settings.searchUrls || [];
+  
+  // Migrate old string format to new object format
+  const needsMigration = urls.some(item => typeof item === 'string');
+  if (needsMigration) {
+    urls = urls.map(normalizeSearchUrl);
+    await chrome.storage.local.set({ searchUrls: urls });
+  }
+  
   const listDiv = document.getElementById('searchUrlsList');
   
   if (urls.length === 0) {
@@ -130,30 +177,78 @@ async function loadSearchUrls() {
   // Clear existing content
   listDiv.innerHTML = '';
   
-  // Create list items with event listeners instead of inline onclick
-  urls.forEach((url, index) => {
+  // Create list items with editable fields
+  urls.forEach((item, index) => {
+    const normalized = normalizeSearchUrl(item);
     const listItem = document.createElement('div');
     listItem.className = 'list-item';
+    listItem.style.display = 'flex';
+    listItem.style.flexDirection = 'column';
+    listItem.style.gap = '10px';
+    listItem.style.padding = '15px';
+    listItem.style.border = '1px solid #ddd';
+    listItem.style.borderRadius = '4px';
+    listItem.style.marginBottom = '10px';
     
-    const contentDiv = document.createElement('div');
-    contentDiv.className = 'list-item-content';
-    contentDiv.textContent = url;
-    contentDiv.title = url;
+    // URL display (read-only, but styled nicely)
+    const urlDiv = document.createElement('div');
+    urlDiv.style.fontWeight = 'bold';
+    urlDiv.style.marginBottom = '5px';
+    urlDiv.style.wordBreak = 'break-all';
+    urlDiv.textContent = normalized.url;
+    urlDiv.title = normalized.url;
     
+    // Location input
+    const locationInput = document.createElement('input');
+    locationInput.type = 'text';
+    locationInput.placeholder = 'Location (optional)';
+    locationInput.value = normalized.location;
+    locationInput.style.padding = '5px';
+    locationInput.style.border = '1px solid #ccc';
+    locationInput.style.borderRadius = '3px';
+    
+    // Keyword input
+    const keywordInput = document.createElement('input');
+    keywordInput.type = 'text';
+    keywordInput.placeholder = 'Keyword (optional)';
+    keywordInput.value = normalized.keyword;
+    keywordInput.style.padding = '5px';
+    keywordInput.style.border = '1px solid #ccc';
+    keywordInput.style.borderRadius = '3px';
+    
+    // Helper function to save current values from both inputs
+    const saveCurrentValues = () => {
+      const currentItem = normalizeSearchUrl(urls[index]);
+      autosaveSearchUrl(index, currentItem.url, locationInput.value, keywordInput.value);
+    };
+    
+    // Add autosave listeners to both inputs
+    locationInput.addEventListener('input', saveCurrentValues);
+    keywordInput.addEventListener('input', saveCurrentValues);
+    
+    // Remove button
     const removeBtn = document.createElement('button');
     removeBtn.className = 'btn btn-danger';
     removeBtn.textContent = 'Remove';
+    removeBtn.style.marginTop = '5px';
     removeBtn.addEventListener('click', () => removeSearchUrl(index));
     
-    listItem.appendChild(contentDiv);
+    listItem.appendChild(urlDiv);
+    listItem.appendChild(locationInput);
+    listItem.appendChild(keywordInput);
     listItem.appendChild(removeBtn);
     listDiv.appendChild(listItem);
   });
 }
 
 async function addSearchUrl() {
-  const input = document.getElementById('newSearchUrl');
-  const url = input.value.trim();
+  const urlInput = document.getElementById('newSearchUrl');
+  const locationInput = document.getElementById('newSearchLocation');
+  const keywordInput = document.getElementById('newSearchKeyword');
+  
+  const url = urlInput.value.trim();
+  const location = locationInput.value.trim();
+  const keyword = keywordInput.value.trim();
   
   if (!url) {
     alert('Please enter a valid URL');
@@ -166,21 +261,27 @@ async function addSearchUrl() {
   }
   
   const settings = await chrome.storage.local.get(['searchUrls']);
-  const urls = settings.searchUrls || [];
+  let urls = settings.searchUrls || [];
+  
+  // Normalize existing URLs to object format
+  urls = urls.map(normalizeSearchUrl);
   
   if (urls.length >= MAX_SEARCH_URLS) {
     alert(`Maximum ${MAX_SEARCH_URLS} search URLs allowed`);
     return;
   }
   
-  if (urls.includes(url)) {
+  // Check if URL already exists
+  if (urls.some(item => normalizeSearchUrl(item).url === url)) {
     alert('This URL is already added');
     return;
   }
   
-  urls.push(url);
+  urls.push({ url, location, keyword });
   await chrome.storage.local.set({ searchUrls: urls });
-  input.value = '';
+  urlInput.value = '';
+  locationInput.value = '';
+  keywordInput.value = '';
   await loadSearchUrls();
 }
 

@@ -169,8 +169,13 @@ async function performScan() {
   }
   
   // Process each search URL
-  for (const searchUrl of settings.searchUrls) {
+  for (const searchUrlItem of settings.searchUrls) {
     try {
+      // Handle both old string format and new object format
+      const searchUrl = typeof searchUrlItem === 'string' ? searchUrlItem : searchUrlItem.url;
+      
+      if (!searchUrl) continue; // Skip invalid entries
+      
       await updateRunState({
         currentUrl: searchUrl,
         currentPage: 0

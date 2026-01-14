@@ -5,7 +5,7 @@ JobScout is a Chrome Extension (Manifest V3) that helps you monitor LinkedIn Job
 ## Features
 
 - **Hourly Scanning**: Automatically scans LinkedIn job searches at configurable intervals
-- **Multiple Search URLs**: Add 3-10 LinkedIn job search URLs to monitor
+- **Multiple Search URLs**: Add 3-10 LinkedIn job search URLs to monitor with optional location and keyword labels
 - **Resume Matching**: Upload up to 5 resumes and get automatic matching scores for each job
 - **NLP-Based Scoring**: Uses TF-IDF and cosine similarity to match job descriptions with resumes
 - **Local Storage**: All data stored locally in your browser - no external servers
@@ -48,7 +48,10 @@ You can create these using any image editor, or use online tools like [Favicon G
    - Go to LinkedIn Jobs and perform a search
    - Copy the URL from your browser's address bar
    - Paste it into the "Search URLs" tab in JobScout options
+   - (Optional) Add a location label to help identify this search
+   - (Optional) Add a keyword to categorize this search
    - Click "Add URL"
+   - Location and keyword fields auto-save as you type
    - Repeat for up to 10 different searches
 
 3. **Upload Resumes**:
