@@ -198,9 +198,7 @@ export async function archiveOldJobs(daysToArchive = 90) {
     archived: jobsToArchive.length,
     remaining: jobsToKeep.length
   };
-}
-
-/**
+}/**
  * Get archived jobs
  * @returns {Promise<Job[]>}
  */
@@ -216,4 +214,3 @@ export async function getArchivedJobs() {
 export async function clearArchivedJobs() {
   await chrome.storage.local.set({ archivedJobs: [] });
 }
-

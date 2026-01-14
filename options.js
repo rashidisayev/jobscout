@@ -183,59 +183,72 @@ async function loadSearchUrls() {
     const listItem = document.createElement('div');
     listItem.className = 'list-item';
     listItem.style.display = 'flex';
-    listItem.style.flexDirection = 'column';
+    listItem.style.flexDirection = 'row';
+    listItem.style.alignItems = 'center';
     listItem.style.gap = '10px';
     listItem.style.padding = '15px';
     listItem.style.border = '1px solid #ddd';
     listItem.style.borderRadius = '4px';
     listItem.style.marginBottom = '10px';
+    listItem.style.flexWrap = 'wrap';
     
     // URL display (read-only, but styled nicely)
     const urlDiv = document.createElement('div');
     urlDiv.style.fontWeight = 'bold';
-    urlDiv.style.marginBottom = '5px';
     urlDiv.style.wordBreak = 'break-all';
+    urlDiv.style.flex = '1';
+    urlDiv.style.minWidth = '200px';
     urlDiv.textContent = normalized.url;
     urlDiv.title = normalized.url;
     
-    // Location input
-    const locationInput = document.createElement('input');
-    locationInput.type = 'text';
-    locationInput.placeholder = 'Location (optional)';
-    locationInput.value = normalized.location;
-    locationInput.style.padding = '5px';
-    locationInput.style.border = '1px solid #ccc';
-    locationInput.style.borderRadius = '3px';
+    // Container for labels
+    const labelsContainer = document.createElement('div');
+    labelsContainer.style.display = 'flex';
+    labelsContainer.style.gap = '8px';
+    labelsContainer.style.alignItems = 'center';
+    labelsContainer.style.flexShrink = '0';
     
-    // Keyword input
-    const keywordInput = document.createElement('input');
-    keywordInput.type = 'text';
-    keywordInput.placeholder = 'Keyword (optional)';
-    keywordInput.value = normalized.keyword;
-    keywordInput.style.padding = '5px';
-    keywordInput.style.border = '1px solid #ccc';
-    keywordInput.style.borderRadius = '3px';
+    // Location label (green) - only show if location exists
+    if (normalized.location && normalized.location.trim()) {
+      const locationLabel = document.createElement('span');
+      locationLabel.textContent = normalized.location;
+      locationLabel.style.display = 'inline-block';
+      locationLabel.style.padding = '4px 8px';
+      locationLabel.style.borderRadius = '12px';
+      locationLabel.style.fontSize = '12px';
+      locationLabel.style.fontWeight = '500';
+      locationLabel.style.backgroundColor = '#4CAF50'; // Green
+      locationLabel.style.color = 'white';
+      locationLabel.style.whiteSpace = 'nowrap';
+      labelsContainer.appendChild(locationLabel);
+    }
     
-    // Helper function to save current values from both inputs
-    const saveCurrentValues = () => {
-      const currentItem = normalizeSearchUrl(urls[index]);
-      autosaveSearchUrl(index, currentItem.url, locationInput.value, keywordInput.value);
-    };
-    
-    // Add autosave listeners to both inputs
-    locationInput.addEventListener('input', saveCurrentValues);
-    keywordInput.addEventListener('input', saveCurrentValues);
+    // Keyword label (yellow) - only show if keyword exists
+    if (normalized.keyword && normalized.keyword.trim()) {
+      const keywordLabel = document.createElement('span');
+      keywordLabel.textContent = normalized.keyword;
+      keywordLabel.style.display = 'inline-block';
+      keywordLabel.style.padding = '4px 8px';
+      keywordLabel.style.borderRadius = '12px';
+      keywordLabel.style.fontSize = '12px';
+      keywordLabel.style.fontWeight = '500';
+      keywordLabel.style.backgroundColor = '#FFC107'; // Yellow
+      keywordLabel.style.color = '#333';
+      keywordLabel.style.whiteSpace = 'nowrap';
+      labelsContainer.appendChild(keywordLabel);
+    }
     
     // Remove button
     const removeBtn = document.createElement('button');
     removeBtn.className = 'btn btn-danger';
     removeBtn.textContent = 'Remove';
-    removeBtn.style.marginTop = '5px';
+    removeBtn.style.flexShrink = '0';
     removeBtn.addEventListener('click', () => removeSearchUrl(index));
     
     listItem.appendChild(urlDiv);
-    listItem.appendChild(locationInput);
-    listItem.appendChild(keywordInput);
+    if (labelsContainer.children.length > 0) {
+      listItem.appendChild(labelsContainer);
+    }
     listItem.appendChild(removeBtn);
     listDiv.appendChild(listItem);
   });
