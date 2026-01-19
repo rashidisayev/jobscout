@@ -590,55 +590,66 @@ function displayResults(jobs) {
     return;
   }
   
-  const table = document.createElement('table');
-  table.innerHTML = `
-    <thead>
-      <tr>
-        <th>Title</th>
-        <th>Company</th>
-        <th>Location</th>
-        <th>Date Posted</th>
-        <th>Best Resume</th>
-        <th>
-          Score
-          <span class="score-help-icon" id="scoreHelpIcon" title="Click for score information">?</span>
-        </th>
-        <th>Actions</th>
-      </tr>
-    </thead>
-    <tbody></tbody>
+  // Wrapper that contains score help + cards list (Hiring.cafe-style)
+  const wrapper = document.createElement('div');
+  wrapper.className = 'job-cards-wrapper';
+
+  const scoreHeader = document.createElement('div');
+  scoreHeader.className = 'job-cards-header';
+  scoreHeader.innerHTML = `
+    <span class="job-cards-header-label">Jobs</span>
+    <span class="job-cards-header-score">
+      Score
+      <span class="score-help-icon" id="scoreHelpIcon" title="Click for score information">?</span>
+    </span>
   `;
-  
-  const tbody = table.querySelector('tbody');
-  
+
+  const cardsContainer = document.createElement('div');
+  cardsContainer.className = 'job-cards';
+
   jobs.forEach(job => {
-    const row = document.createElement('tr');
-    
-    const titleCell = document.createElement('td');
-    titleCell.textContent = deduplicateTitle(job.title) || 'N/A';
-    
-    const companyCell = document.createElement('td');
-    companyCell.textContent = job.company && job.company !== 'Unknown' ? job.company : 'N/A';
-    
-    const locationCell = document.createElement('td');
-    locationCell.textContent = job.location && job.location !== 'Unknown' ? job.location : 'N/A';
-    
-    const dateCell = document.createElement('td');
-    // Handle both null and 'Unknown' for dates
+    const card = document.createElement('div');
+    card.className = 'job-card';
+
+    const title = deduplicateTitle(job.title) || 'N/A';
+    const company = job.company && job.company !== 'Unknown' ? job.company : 'N/A';
+    const location = job.location && job.location !== 'Unknown' ? job.location : 'N/A';
+
+    // Header: title + company/location
+    const header = document.createElement('div');
+    header.className = 'job-card-header';
+
+    const titleEl = document.createElement('div');
+    titleEl.className = 'job-card-title';
+    titleEl.textContent = title;
+
+    const companyEl = document.createElement('div');
+    companyEl.className = 'job-card-company';
+    companyEl.textContent = `${company} • ${location}`;
+
+    header.appendChild(titleEl);
+    header.appendChild(companyEl);
+
+    // Meta row: date posted + best resume badge + main score badge
+    const metaRow = document.createElement('div');
+    metaRow.className = 'job-card-meta';
+
+    const dateEl = document.createElement('span');
+    dateEl.className = 'job-card-date';
     if (job.datePosted && job.datePosted !== 'Unknown' && job.datePosted !== null && job.datePosted.trim() !== '') {
-      dateCell.textContent = job.datePosted;
+      dateEl.textContent = `Posted: ${job.datePosted}`;
     } else {
-      dateCell.textContent = 'Unknown';
+      dateEl.textContent = 'Posted: Unknown';
     }
-    
-    const resumeCell = document.createElement('td');
+
+    const resumeMeta = document.createElement('span');
+    resumeMeta.className = 'job-card-resume';
+
     const bestMatch = job.bestMatch || (job.bestResume ? { cvName: job.bestResume, score: job.matchScore ?? job.score } : null);
     if (bestMatch) {
       const resumeContainer = document.createElement('div');
-      resumeContainer.style.display = 'flex';
-      resumeContainer.style.alignItems = 'center';
-      resumeContainer.style.gap = '8px';
-      
+      resumeContainer.className = 'job-card-resume-pill';
+
       const resumeName = document.createElement('span');
       resumeName.textContent = bestMatch.cvName || job.bestResume || 'N/A';
       resumeContainer.appendChild(resumeName);
@@ -653,19 +664,14 @@ function displayResults(jobs) {
         badge.textContent = scorePercent.toFixed(0) + '%';
         badge.style.backgroundColor = scoreColor.bg;
         badge.style.color = scoreColor.text;
-        badge.style.padding = '2px 6px';
-        badge.style.borderRadius = '3px';
-        badge.style.fontSize = '11px';
-        badge.style.fontWeight = 'bold';
         resumeContainer.appendChild(badge);
       }
       
-      resumeCell.appendChild(resumeContainer);
-    } else {
-      resumeCell.textContent = 'N/A';
+      resumeMeta.appendChild(resumeContainer);
     }
-    
-    const scoreCell = document.createElement('td');
+
+    const scoreCell = document.createElement('span');
+    scoreCell.className = 'job-card-score';
     const scoreValue = job.matchScore ?? job.score;
     if (scoreValue !== undefined && scoreValue !== null) {
       const scorePercent = scoreValue * 100;
@@ -677,38 +683,27 @@ function displayResults(jobs) {
       badge.textContent = scorePercent.toFixed(1);
       badge.style.backgroundColor = `${scoreColor.bg}`;
       badge.style.color = `${scoreColor.text}`;
-      badge.style.border = 'none';
       scoreCell.appendChild(badge);
-    } else {
-      scoreCell.textContent = 'N/A';
     }
-    
-    const actionsCell = document.createElement('td');
-    const actions = document.createElement('div');
-    actions.className = 'job-actions';
-    actions.style.display = 'flex';
-    actions.style.alignItems = 'center';
-    actions.style.gap = '8px';
-    actions.style.flexWrap = 'wrap';
-    
-    // Labels container for search URL metadata (location/keyword)
+
+    metaRow.appendChild(dateEl);
+    if (resumeMeta.children.length > 0) {
+      metaRow.appendChild(resumeMeta);
+    }
+    metaRow.appendChild(scoreCell);
+
+    // Footer: search labels + actions
+    const footer = document.createElement('div');
+    footer.className = 'job-card-footer';
+
     const labelsContainer = document.createElement('div');
-    labelsContainer.style.display = 'flex';
-    labelsContainer.style.gap = '6px';
-    labelsContainer.style.alignItems = 'center';
-    
+    labelsContainer.className = 'job-card-labels';
+
     // Location label (green) from the saved search URL
     if (job.searchLocationLabel && String(job.searchLocationLabel).trim()) {
       const locationLabel = document.createElement('span');
       locationLabel.textContent = job.searchLocationLabel;
-      locationLabel.style.display = 'inline-block';
-      locationLabel.style.padding = '4px 8px';
-      locationLabel.style.borderRadius = '12px';
-      locationLabel.style.fontSize = '12px';
-      locationLabel.style.fontWeight = '500';
-      locationLabel.style.backgroundColor = '#4CAF50'; // Green
-      locationLabel.style.color = 'white';
-      locationLabel.style.whiteSpace = 'nowrap';
+      locationLabel.className = 'job-pill job-pill-location';
       labelsContainer.appendChild(locationLabel);
     }
     
@@ -716,21 +711,13 @@ function displayResults(jobs) {
     if (job.searchKeywordLabel && String(job.searchKeywordLabel).trim()) {
       const keywordLabel = document.createElement('span');
       keywordLabel.textContent = job.searchKeywordLabel;
-      keywordLabel.style.display = 'inline-block';
-      keywordLabel.style.padding = '4px 8px';
-      keywordLabel.style.borderRadius = '12px';
-      keywordLabel.style.fontSize = '12px';
-      keywordLabel.style.fontWeight = '500';
-      keywordLabel.style.backgroundColor = '#FFC107'; // Yellow
-      keywordLabel.style.color = '#333';
-      keywordLabel.style.whiteSpace = 'nowrap';
+      keywordLabel.className = 'job-pill job-pill-keyword';
       labelsContainer.appendChild(keywordLabel);
     }
-    
-    if (labelsContainer.children.length > 0) {
-      actions.appendChild(labelsContainer);
-    }
-    
+
+    const actions = document.createElement('div');
+    actions.className = 'job-actions';
+
     // Add "Apply" button to open job URL
     const applyBtn = document.createElement('button');
     applyBtn.textContent = 'Apply';
@@ -756,23 +743,20 @@ function displayResults(jobs) {
       actions.append(whyBtn);
     }
     
-    actionsCell.appendChild(actions);
-    
-    row.append(
-      titleCell,
-      companyCell,
-      locationCell,
-      dateCell,
-      resumeCell,
-      scoreCell,
-      actionsCell
-    );
-    
-    tbody.appendChild(row);
+    footer.appendChild(labelsContainer);
+    footer.appendChild(actions);
+
+    card.appendChild(header);
+    card.appendChild(metaRow);
+    card.appendChild(footer);
+
+    cardsContainer.appendChild(card);
   });
   
   tableDiv.innerHTML = '';
-  tableDiv.appendChild(table);
+  wrapper.appendChild(scoreHeader);
+  wrapper.appendChild(cardsContainer);
+  tableDiv.appendChild(wrapper);
   
   const helpIcon = document.getElementById('scoreHelpIcon');
   if (helpIcon) {
