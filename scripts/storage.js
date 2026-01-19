@@ -205,9 +205,7 @@ export async function archiveOldJobs(daysToArchive = 90) {
 export async function getArchivedJobs() {
   const { archivedJobs = [] } = await chrome.storage.local.get(['archivedJobs']);
   return archivedJobs;
-}
-
-/**
+}/**
  * Clear archived jobs
  * @returns {Promise<void>}
  */

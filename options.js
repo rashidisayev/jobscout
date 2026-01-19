@@ -1105,10 +1105,10 @@ async function saveJobToSheet(job, buttonElement) {
   
   try {
     // Prepare data from the job card (no need to open new tab)
-    const jobUrl = job.url || job.link;
     const title = deduplicateTitle(job.title) || 'N/A';
     const company = job.company && job.company !== 'Unknown' ? job.company : 'N/A';
     const location = job.location && job.location !== 'Unknown' ? job.location : '';
+    const jobUrl = job.url || job.link;
     const currentDate = new Date().toLocaleDateString('en-GB'); // dd.mm.yyyy format
     
     // Add location to company name if available

@@ -682,14 +682,31 @@ function tokenize(text) {
     .filter(word => word.length > 2); // Filter again after cleaning
 }
 
+// Enhanced keyword extraction with synonym support
+const TECHNICAL_SYNONYMS_LEGACY = {
+  'javascript': ['js', 'ecmascript', 'nodejs', 'node.js'],
+  'typescript': ['ts'],
+  'react': ['reactjs', 'react.js'],
+  'angular': ['angularjs', 'angular.js'],
+  'vue': ['vuejs', 'vue.js'],
+  'python': ['py'],
+  'machine learning': ['ml', 'ai', 'artificial intelligence'],
+  'data science': ['data analytics', 'data analysis'],
+  'devops': ['dev ops', 'sre', 'site reliability'],
+  'kubernetes': ['k8s'],
+  'amazon web services': ['aws'],
+  'google cloud platform': ['gcp', 'google cloud'],
+  'microsoft azure': ['azure']
+};
+
 // Extract important keywords (skills, technologies, tools)
 function extractImportantKeywords(text) {
   if (!text) return new Set();
   
   const keywords = new Set();
-  const tokens = tokenize(text);
+  const lowerText = text.toLowerCase();
   
-  // Common technical terms and patterns
+  // Enhanced technical terms and patterns
   const techPatterns = [
     // Programming languages
     /\b(java|python|javascript|typescript|go|rust|c\+\+|c#|php|ruby|swift|kotlin|scala|r|matlab|perl|shell|bash|powershell)\b/gi,
@@ -715,6 +732,13 @@ function extractImportantKeywords(text) {
         const cleaned = match.toLowerCase().trim();
         if (cleaned.length > 2) {
           keywords.add(cleaned);
+          // Add synonyms
+          for (const [key, synonyms] of Object.entries(TECHNICAL_SYNONYMS_LEGACY)) {
+            if (cleaned === key || synonyms.includes(cleaned)) {
+              keywords.add(key);
+              synonyms.forEach(syn => keywords.add(syn));
+            }
+          }
         }
       });
     }
@@ -758,18 +782,18 @@ function calculateIDF(documents) {
     }
   }
   
-  // Calculate IDF with smoothing to avoid zero values
-  // Standard formula: idf(t) = log((N + 1) / (df(t) + 1))
-  // This prevents log(1) = 0 when a term appears in all documents
-  // For small document sets (like 2 docs), this gives better differentiation
+  // Enhanced IDF calculation with better smoothing
+  // Standard formula: idf(t) = log((N + 1) / (df(t) + 0.5))
+  // Using 0.5 instead of 1 for better differentiation
   for (const term in idf) {
     const docFreq = idf[term];
-    // Smoothing: add 1 to both numerator and denominator
-    // This ensures terms that appear in all docs still get a small positive IDF
-    idf[term] = Math.log((totalDocs + 1) / (docFreq + 1));
+    // Improved smoothing for better term discrimination
+    idf[term] = Math.log((totalDocs + 1) / (docFreq + 0.5));
+    
+    // Boost important keywords in IDF
+    // (We'll check this in extractImportantKeywords context)
     
     // Ensure minimum IDF value to prevent zero weights
-    // Terms appearing in all docs get log((N+1)/(N+1)) = 0, so we add a small epsilon
     if (idf[term] <= 0) {
       idf[term] = 0.1; // Small positive value for common terms
     }
@@ -782,8 +806,8 @@ function calculateTFIDF(tokens, idf, importantKeywords = new Set()) {
   const tf = calculateTF(tokens);
   const tfidf = {};
   
-  // Weight important keywords more heavily
-  const IMPORTANT_KEYWORD_WEIGHT = 2.0;
+  // Enhanced weighting for important keywords
+  const IMPORTANT_KEYWORD_WEIGHT = 2.5; // Increased from 2.0
   
   for (const term in tf) {
     let weight = 1.0;
@@ -793,12 +817,18 @@ function calculateTFIDF(tokens, idf, importantKeywords = new Set()) {
       weight = IMPORTANT_KEYWORD_WEIGHT;
     }
     
-    // Also boost multi-word technical terms
+    // Also boost multi-word technical terms and longer terms
     if (term.includes('-') || term.includes('_') || term.length > 8) {
-      weight *= 1.3;
+      weight *= 1.4; // Increased from 1.3
     }
     
-    tfidf[term] = tf[term] * (idf[term] || 0) * weight;
+    // Boost terms that appear in both documents (stronger signal)
+    const idfValue = idf[term] || 0;
+    if (idfValue > 0.5) { // Terms that are somewhat rare
+      weight *= 1.2;
+    }
+    
+    tfidf[term] = tf[term] * idfValue * weight;
   }
   
   return tfidf;
@@ -856,10 +886,11 @@ function cosineSimilarity(jobDescription, resumeText, jobTitle = '') {
   // Calculate base cosine similarity
   let similarity = calculateCosineSimilarity(jobTFIDF, resumeTFIDF);
   
-  // Bonus for matching important keywords
+  // Enhanced bonus for matching important keywords
   const matchingKeywords = [...jobKeywords].filter(kw => resumeKeywords.has(kw));
   if (matchingKeywords.length > 0) {
-    const keywordBonus = Math.min(0.15, matchingKeywords.length * 0.02); // Max 15% bonus
+    // Improved bonus calculation: logarithmic scaling for better distribution
+    const keywordBonus = Math.min(0.18, Math.log(matchingKeywords.length + 1) * 0.04); // Max 18% bonus
     similarity += keywordBonus;
   }
   
@@ -871,12 +902,18 @@ function cosineSimilarity(jobDescription, resumeText, jobTitle = '') {
                                [...titleKeywords].some(kw => resumeKeywords.has(kw));
     
     if (titleMatchesResume) {
-      similarity += 0.05; // 5% bonus for title match
+      similarity += 0.06; // Increased to 6% bonus for title match
     }
   }
   
-  // Ensure similarity is a valid number between 0 and 1
-  const normalizedSimilarity = Math.max(0, Math.min(1, similarity));
+  // Apply calibration for better score distribution
+  let normalizedSimilarity = Math.max(0, Math.min(1, similarity));
+  
+  // Slight boost for mid-range scores (0.3-0.7) to better differentiate
+  if (normalizedSimilarity >= 0.3 && normalizedSimilarity <= 0.7) {
+    normalizedSimilarity = normalizedSimilarity * 1.05;
+    normalizedSimilarity = Math.min(1, normalizedSimilarity);
+  }
   
   return normalizedSimilarity;
 }
