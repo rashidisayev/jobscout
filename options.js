@@ -28,6 +28,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadSearchUrls();
   await loadResumes();
   await loadGoogleSheetUrl();
+  await loadGoogleSheetStatsUrl();
   await loadSettings();
   await loadResults();
   await updateLiveScanStatus();
@@ -49,9 +50,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   
   document.getElementById('saveSettings').addEventListener('click', saveSettings);
   document.getElementById('exportCsv').addEventListener('click', exportCsv);
+  document.getElementById('openStatistics').addEventListener('click', openStatisticsSheet);
   document.getElementById('clearAllJobs').addEventListener('click', clearAllJobs);
   document.getElementById('scanTabNow').addEventListener('click', scanTabNow);
   document.getElementById('saveGoogleSheetUrl').addEventListener('click', saveGoogleSheetUrl);
+  document.getElementById('saveGoogleSheetStatsUrl').addEventListener('click', saveGoogleSheetStatsUrl);
   document.getElementById('testGoogleSheetUrl').addEventListener('click', testGoogleSheetConnection);
   document.getElementById('showAppsScriptHelp').addEventListener('click', showAppsScriptHelp);
   document.getElementById('sortBy').addEventListener('change', () => {
@@ -458,6 +461,20 @@ async function loadGoogleSheetUrl() {
   }
 }
 
+// Statistics Sheet URL (opens from Results tab)
+async function loadGoogleSheetStatsUrl() {
+  const settings = await chrome.storage.local.get(['googleSheetStatsUrl']);
+  const url = settings.googleSheetStatsUrl || '';
+  const input = document.getElementById('googleSheetStatsUrl');
+  if (input) input.value = url;
+
+  if (url) {
+    updateGoogleSheetStatsStatus('✓ Statistics sheet URL saved', 'success');
+  } else {
+    updateGoogleSheetStatsStatus('', 'info');
+  }
+}
+
 async function saveGoogleSheetUrl() {
   const input = document.getElementById('googleSheetUrl');
   const url = input.value.trim();
@@ -475,6 +492,24 @@ async function saveGoogleSheetUrl() {
   
   await chrome.storage.local.set({ googleSheetUrl: url });
   updateGoogleSheetStatus('✓ Google Sheet URL saved successfully', 'success');
+}
+
+async function saveGoogleSheetStatsUrl() {
+  const input = document.getElementById('googleSheetStatsUrl');
+  const url = (input?.value || '').trim();
+
+  if (!url) {
+    updateGoogleSheetStatsStatus('Please enter a Google Sheet URL', 'error');
+    return;
+  }
+
+  if (!/^https?:\/\//i.test(url)) {
+    updateGoogleSheetStatsStatus('Invalid URL. Must start with http:// or https://', 'error');
+    return;
+  }
+
+  await chrome.storage.local.set({ googleSheetStatsUrl: url });
+  updateGoogleSheetStatsStatus('✓ Statistics sheet URL saved successfully', 'success');
 }
 
 async function testGoogleSheetConnection() {
@@ -521,6 +556,41 @@ function updateGoogleSheetStatus(message, type) {
     statusDiv.style.color = '#dc3545';
   } else if (type === 'info') {
     statusDiv.style.color = '#0077b5';
+  }
+}
+
+function updateGoogleSheetStatsStatus(message, type) {
+  const statusDiv = document.getElementById('googleSheetStatsStatus');
+  if (!statusDiv) return;
+
+  statusDiv.textContent = message;
+  statusDiv.style.color = '';
+
+  if (!message) return;
+
+  if (type === 'success') {
+    statusDiv.style.color = '#28a745';
+  } else if (type === 'error') {
+    statusDiv.style.color = '#dc3545';
+  } else if (type === 'info') {
+    statusDiv.style.color = '#0077b5';
+  }
+}
+
+async function openStatisticsSheet() {
+  const settings = await chrome.storage.local.get(['googleSheetStatsUrl']);
+  const url = settings.googleSheetStatsUrl;
+
+  if (!url) {
+    showToast('Please save your Statistics Sheet URL in Settings first', 'error');
+    return;
+  }
+
+  try {
+    window.open(url, '_blank');
+  } catch (error) {
+    console.error('Failed to open statistics sheet:', error);
+    showToast('Failed to open Statistics sheet: ' + (error?.message || 'Unknown error'), 'error');
   }
 }
 
