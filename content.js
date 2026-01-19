@@ -403,8 +403,8 @@ async function scrapeJobs(
         datePosted = jobExtractorModule.extractDatePosted(card, pageJsonLd);
       }
       
-      // If still unknown, specifically look for white-space-pre spans and their siblings/parents
-      if (datePosted === 'Unknown') {
+      // If still unknown or null, specifically look for white-space-pre spans and their siblings/parents
+      if (!datePosted || datePosted === 'Unknown') {
         const whiteSpacePreElements = card.querySelectorAll('span.white-space-pre, .white-space-pre, span[class*="white-space-pre"], [class*="white-space-pre"]');
         for (const el of whiteSpacePreElements) {
           // Check parent element (date is often in the parent of white-space-pre)
@@ -481,7 +481,7 @@ async function scrapeJobs(
       }
       
       // If still unknown, try to find all time elements in the card
-      if (datePosted === 'Unknown') {
+      if (!datePosted || datePosted === 'Unknown') {
         const timeElements = card.querySelectorAll('time[datetime]');
         for (const timeEl of timeElements) {
           const datetime = timeEl.getAttribute('datetime');
@@ -520,7 +520,7 @@ async function scrapeJobs(
       }
       
       // Also try all time elements without datetime attribute
-      if (datePosted === 'Unknown') {
+      if (!datePosted || datePosted === 'Unknown') {
         const allTimeElements = card.querySelectorAll('time');
         for (const timeEl of allTimeElements) {
           const text = timeEl.textContent?.trim();
@@ -538,7 +538,7 @@ async function scrapeJobs(
       }
       
       // If still unknown, search through all metadata elements (similar to location extraction)
-      if (datePosted === 'Unknown') {
+      if (!datePosted || datePosted === 'Unknown') {
         // Look through all metadata elements in the card
         const metadataElements = card.querySelectorAll('.job-search-card__metadata-item, .base-search-card__metadata-item, .job-card-container__metadata-item, .base-search-card__metadata, .job-search-card__metadata, li, span, div');
         for (const el of metadataElements) {
@@ -566,7 +566,7 @@ async function scrapeJobs(
       }
       
       // Last resort: search through all text elements in the card
-      if (datePosted === 'Unknown') {
+      if (!datePosted || datePosted === 'Unknown') {
         const allElements = card.querySelectorAll('span, li, div, p, time');
         for (const el of allElements) {
           const text = el.textContent?.trim() || '';
@@ -594,22 +594,19 @@ async function scrapeJobs(
       }
       
       // Debug logging if still unknown
-      if (datePosted === 'Unknown') {
-        console.warn('Date extraction failed for job card:', {
-          title: title,
-          company: company,
-          location: location,
-          cardHTML: card.innerHTML.substring(0, 500),
-          allTimeElements: Array.from(card.querySelectorAll('time')).map(el => ({
-            text: el.textContent?.trim(),
-            datetime: el.getAttribute('datetime'),
-            classes: el.className
-          })),
-          metadataElements: Array.from(card.querySelectorAll('.base-search-card__metadata-item, .job-search-card__metadata-item')).map(el => ({
-            text: el.textContent?.trim(),
-            classes: el.className
-          }))
+      if (!datePosted || datePosted === 'Unknown') {
+        console.group('[content.js] Date extraction failed - Fallback also failed');
+        console.log('Job:', title, 'at', company);
+        console.log('All text in card:', card.textContent?.substring(0, 500));
+        console.log('Looking for time elements...');
+        Array.from(card.querySelectorAll('time')).forEach((el, i) => {
+          console.log(`  Time ${i}:`, el.textContent?.trim(), '| datetime:', el.getAttribute('datetime'));
         });
+        console.log('Looking for metadata...');
+        Array.from(card.querySelectorAll('[class*="metadata"]')).slice(0, 3).forEach((el, i) => {
+          console.log(`  Metadata ${i}:`, el.textContent?.trim());
+        });
+        console.groupEnd();
       }
       
       // If we still have unknowns, try extracting from card's full text structure
@@ -677,7 +674,7 @@ async function scrapeJobs(
         }
         
         // More aggressive date extraction
-        if (datePosted === 'Unknown') {
+        if (!datePosted || datePosted === 'Unknown') {
           // Look for date patterns in text
           const datePatterns = [
             /(\d+\s+(day|week|month|hour|minute)s?\s+ago)/i,
@@ -696,7 +693,7 @@ async function scrapeJobs(
           }
           
           // Also check HTML for time elements with datetime
-          if (datePosted === 'Unknown') {
+          if (!datePosted || datePosted === 'Unknown') {
             const timeElements = card.querySelectorAll('time');
             for (const timeEl of timeElements) {
               const datetime = timeEl.getAttribute('datetime');
@@ -737,7 +734,7 @@ async function scrapeJobs(
       }
       
       // Debug logging for date extraction
-      if (datePosted === 'Unknown') {
+      if (!datePosted || datePosted === 'Unknown') {
         console.log('Date extraction failed for job:', {
           title,
           cardHTML: card.innerHTML.substring(0, 500),
@@ -798,11 +795,11 @@ async function scrapeJobs(
     
     // Debug: log if date is still Unknown
     if (finalJobInfo.datePosted === 'Unknown') {
-      console.warn('Job added with Unknown date:', {
-        title: finalJobInfo.title,
-        company: finalJobInfo.company,
-        url: finalJobInfo.url
-      });
+      console.warn('Job added with Unknown date:', 
+        'Title:', finalJobInfo.title,
+        'Company:', finalJobInfo.company,
+        'URL:', finalJobInfo.url
+      );
     }
     
     jobs.push(finalJobInfo);

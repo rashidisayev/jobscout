@@ -208,20 +208,27 @@ export function extractCompany(card, jsonLd = null, title = '') {
 }
 
 /**
- * Extract date posted with ISO date format
+ * Extract date posted - returns human-readable format
  * @param {Element} card - The job card element
  * @param {Object} jsonLd - Optional JSON-LD data
- * @returns {string|null} ISO date (YYYY-MM-DD) or null if unknown
+ * @returns {string|null} Human-readable date or null if unknown
  */
 export function extractDatePosted(card, jsonLd = null) {
-  // Priority 1: JSON-LD
+  // Priority 1: JSON-LD - convert to human-readable format
   if (jsonLd && jsonLd.datePosted) {
     try {
       const date = new Date(jsonLd.datePosted);
       if (!isNaN(date.getTime())) {
-        const isoDate = date.toISOString().split('T')[0];
-        console.log('[extractDatePosted] Found from JSON-LD:', isoDate);
-        return isoDate;
+        const now = new Date();
+        const diffDays = Math.floor((now - date) / (1000 * 60 * 60 * 24));
+        let readable;
+        if (diffDays === 0) readable = 'Today';
+        else if (diffDays === 1) readable = '1 day ago';
+        else if (diffDays < 7) readable = `${diffDays} days ago`;
+        else if (diffDays < 30) readable = `${Math.floor(diffDays / 7)} weeks ago`;
+        else readable = `${Math.floor(diffDays / 30)} months ago`;
+        console.log('[extractDatePosted] Found from JSON-LD:', readable);
+        return readable;
       }
     } catch (e) {
       // Invalid date, continue
@@ -236,102 +243,240 @@ export function extractDatePosted(card, jsonLd = null) {
       try {
         const date = new Date(datetime);
         if (!isNaN(date.getTime())) {
-          const isoDate = date.toISOString().split('T')[0];
-          console.log('[extractDatePosted] Found from time[datetime]:', isoDate);
-          return isoDate;
+          const now = new Date();
+          const diffDays = Math.floor((now - date) / (1000 * 60 * 60 * 24));
+          let readable;
+          if (diffDays === 0) readable = 'Today';
+          else if (diffDays === 1) readable = '1 day ago';
+          else if (diffDays < 7) readable = `${diffDays} days ago`;
+          else if (diffDays < 30) readable = `${Math.floor(diffDays / 7)} weeks ago`;
+          else readable = `${Math.floor(diffDays / 30)} months ago`;
+          console.log('[extractDatePosted] Found from time[datetime]:', readable);
+          return readable;
         }
       } catch (e) {
-        // Invalid date, continue
+        // Invalid date, try getting text content
+        const text = timeEl.textContent?.trim();
+        if (text && text.length > 0 && text.length < 100) {
+          console.log('[extractDatePosted] Found from time element text:', text);
+          return text;
+        }
       }
-    }
-  }
-  
-  // Priority 3: Meta tags
-  if (card.ownerDocument) {
-    const metaDate = card.ownerDocument.querySelector(
-      'meta[property="article:published_time"], meta[name="date"], meta[property="og:updated_time"]'
-    );
-    if (metaDate) {
-      const dateStr = metaDate.getAttribute('content') || metaDate.getAttribute('value');
-      if (dateStr) {
-        try {
-          const date = new Date(dateStr);
-          if (!isNaN(date.getTime())) {
-            const isoDate = date.toISOString().split('T')[0];
-            console.log('[extractDatePosted] Found from meta tag:', isoDate);
-            return isoDate;
-          }
-        } catch (e) {
-          // Invalid date, continue
+    } else {
+      // No datetime attribute, try text content
+      const text = timeEl.textContent?.trim();
+      if (text && text.length > 0 && text.length < 100) {
+        // Clean up "Reposted X ago" or "Posted X ago" format
+        const cleaned = text.replace(/^(reposted|posted)\s+/i, '').trim();
+        if (cleaned && cleaned.match(/\b(ago|today|yesterday|just now)\b/i)) {
+          console.log('[extractDatePosted] Found from time element text:', cleaned);
+          return cleaned;
         }
       }
     }
   }
   
-  // Priority 4: Text pattern matching
+  // Priority 3: Text pattern matching with comprehensive selectors
   const dateSelectors = [
+    'time',
     'span.white-space-pre',
     '.white-space-pre',
+    'span[class*="white-space-pre"]',
+    '[class*="white-space-pre"]',
     '.job-search-card__listdate',
     '.job-search-card__listdate--new',
     '.job-card-container__listed-date',
     'span[data-testid="job-posted-date"]',
+    'li[data-testid="job-posted-date"]',
+    '[data-testid="job-posted-date"]',
+    '[data-test-id="job-posted-date"]',
     '.job-search-card__metadata-item',
-    '.base-search-card__metadata-item'
+    '.base-search-card__metadata-item',
+    '.job-card-container__metadata-item',
+    '[class*="listdate"]',
+    '[class*="listed-date"]',
+    '[class*="posted-date"]',
+    '[class*="metadata"]'
   ];
   
   const datePatterns = [
-    /(?:reposted|posted)\s+(\d+\s+(?:day|week|month|hour|minute)s?\s+ago)/i,
-    /(?:reposted|posted)\s+(today|yesterday|just\s+now)/i,
-    /(\d+\s+(?:day|week|month|hour|minute)s?\s+ago)/i,
-    /(today|yesterday|just\s+now)/i
+    /\b(\d+\s+(?:day|week|month|hour|minute)s?\s+ago)\b/i,
+    /\b(today|yesterday|just\s+now)\b/i,
+    /\b(reposted|posted)\s+(\d+\s+(?:day|week|month|hour|minute)s?\s+ago)\b/i,
+    /\b(reposted|posted)\s+(today|yesterday|just\s+now)\b/i
   ];
   
+  // Check all date-related elements
   for (const selector of dateSelectors) {
-    const element = card.querySelector(selector);
-    if (element) {
-      const text = element.textContent?.trim();
-      if (text) {
-        // Try to parse relative dates
-        const now = new Date();
-        let date = null;
+    const elements = card.querySelectorAll(selector);
+    for (const element of elements) {
+      let text = element.textContent?.trim() || '';
+      if (!text || text.length === 0 || text.length > 100) continue;
+      
+      // Check if it looks like a date (contains date keywords)
+      if (text.match(/\b(ago|day|days|week|weeks|month|months|hour|hours|minute|minutes|today|yesterday|just|now|posted|active|reposted)\b/i)) {
+        // Exclude location patterns
+        const isLocation = text.match(/(Remote|On-site|Hybrid|United States|USA|Canada|UK|Europe|Asia)/i) ||
+                          text.match(/^[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?,\s*[A-Z]{2}$/);
         
-        if (text.toLowerCase().includes('today') || text.toLowerCase().includes('just now')) {
-          date = now;
-        } else if (text.toLowerCase().includes('yesterday')) {
-          date = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-        } else {
-          // Try to extract "X days/weeks/months ago"
-          for (const pattern of datePatterns) {
-            const match = text.match(pattern);
-            if (match) {
-              const matchText = match[1] || match[0];
-              const daysMatch = matchText.match(/(\d+)\s+days?\s+ago/i);
-              const weeksMatch = matchText.match(/(\d+)\s+weeks?\s+ago/i);
-              const monthsMatch = matchText.match(/(\d+)\s+months?\s+ago/i);
-              
-              if (daysMatch) {
-                date = new Date(now.getTime() - parseInt(daysMatch[1]) * 24 * 60 * 60 * 1000);
-              } else if (weeksMatch) {
-                date = new Date(now.getTime() - parseInt(weeksMatch[1]) * 7 * 24 * 60 * 60 * 1000);
-              } else if (monthsMatch) {
-                date = new Date(now.getTime() - parseInt(monthsMatch[1]) * 30 * 24 * 60 * 60 * 1000);
-              }
-              break;
+        if (!isLocation) {
+          // Clean up "Reposted X ago" or "Posted X ago" format
+          const dateMatch = text.match(/(?:reposted|posted)\s+(.+)/i);
+          if (dateMatch && dateMatch[1]) {
+            const cleaned = dateMatch[1].trim();
+            if (cleaned.length > 0 && cleaned.length < 50) {
+              console.log('[extractDatePosted] Found from pattern (cleaned):', cleaned);
+              return cleaned;
             }
+          } else if (text.match(/\b(ago|today|yesterday|just now)\b/i)) {
+            // Direct date text without "posted"/"reposted" prefix
+            console.log('[extractDatePosted] Found from pattern:', text);
+            return text;
           }
-        }
-        
-        if (date && !isNaN(date.getTime())) {
-          const isoDate = date.toISOString().split('T')[0];
-          console.log('[extractDatePosted] Found from text pattern:', isoDate);
-          return isoDate;
         }
       }
     }
   }
   
-  console.warn('[extractDatePosted] No date found');
+  // Priority 4: Check parent/sibling elements of white-space-pre spans
+  const whiteSpaceElements = card.querySelectorAll('span.white-space-pre, .white-space-pre, span[class*="white-space-pre"]');
+  for (const el of whiteSpaceElements) {
+    // Check parent element
+    const parent = el.parentElement;
+    if (parent) {
+      const parentText = parent.textContent?.trim() || '';
+      if (parentText && parentText.length > 0 && parentText.length < 100) {
+        if (parentText.match(/\b(ago|today|yesterday|posted|reposted)\b/i)) {
+          const isLocation = parentText.match(/(Remote|On-site|Hybrid|United States|USA|Canada|UK|Europe|Asia)/i);
+          if (!isLocation) {
+            const dateMatch = parentText.match(/(?:reposted|posted)\s+(.+)/i);
+            if (dateMatch && dateMatch[1]) {
+              const cleaned = dateMatch[1].trim();
+              if (cleaned.length > 0 && cleaned.length < 50) {
+                console.log('[extractDatePosted] Found from parent element:', cleaned);
+                return cleaned;
+              }
+            }
+          }
+        }
+      }
+    }
+    
+    // Check next sibling
+    const nextSibling = el.nextElementSibling;
+    if (nextSibling) {
+      const siblingText = nextSibling.textContent?.trim() || '';
+      if (siblingText && siblingText.length > 0 && siblingText.length < 100) {
+        if (siblingText.match(/\b(ago|today|yesterday|posted)\b/i)) {
+          const isLocation = siblingText.match(/(Remote|On-site|Hybrid)/i);
+          if (!isLocation) {
+            console.log('[extractDatePosted] Found from next sibling:', siblingText);
+            return siblingText;
+          }
+        }
+      }
+    }
+  }
+  
+  // Priority 5: Last resort - scan ALL text in the card for date patterns
+  const allElements = card.querySelectorAll('*');
+  for (const el of allElements) {
+    const text = el.textContent?.trim() || '';
+    // Only check direct text content (not including children)
+    if (!text || text.length === 0 || text.length > 200) continue;
+    
+    // Look for strong date patterns
+    const datePatterns = [
+      /\b(\d+\s+(?:second|minute|hour|day|week|month)s?\s+ago)\b/i,
+      /\b(today|yesterday|just\s+now)\b/i
+    ];
+    
+    for (const pattern of datePatterns) {
+      const match = text.match(pattern);
+      if (match) {
+        const candidate = match[1].trim();
+        // Make sure it's not part of a longer sentence
+        if (text.length < 100) {
+          // Exclude location-like text
+          const isLocation = text.match(/(Remote|On-site|Hybrid|United States|USA|Canada|UK|Europe|Asia|City|State|Country)/i);
+          if (!isLocation) {
+            // Clean up "Posted X ago" format
+            const cleaned = text.replace(/^(reposted|posted)\s+/i, '').trim();
+            if (cleaned.match(/\b(ago|today|yesterday)\b/i) && cleaned.length < 50) {
+              console.log('[extractDatePosted] Found from last resort scan:', cleaned);
+              return cleaned;
+            }
+          }
+        }
+      }
+    }
+  }
+  
+  // Debug: Log all potential date elements found
+  console.group('[extractDatePosted] No date found - Debug info:');
+  
+  const timeEls = card.querySelectorAll('time');
+  console.log('Time elements found:', timeEls.length);
+  if (timeEls.length > 0) {
+    Array.from(timeEls).forEach((el, i) => {
+      console.log(`  Time ${i}:`, {
+        text: el.textContent?.trim(),
+        datetime: el.getAttribute('datetime'),
+        class: el.className,
+        innerHTML: el.innerHTML.substring(0, 100)
+      });
+    });
+  }
+  
+  const whiteSpaceEls = card.querySelectorAll('span.white-space-pre, .white-space-pre, [class*="white-space"]');
+  console.log('White-space elements found:', whiteSpaceEls.length);
+  if (whiteSpaceEls.length > 0) {
+    Array.from(whiteSpaceEls).slice(0, 5).forEach((el, i) => {
+      console.log(`  WhiteSpace ${i}:`, el.textContent?.trim());
+    });
+  }
+  
+  const metadataEls = card.querySelectorAll('[class*="metadata"]');
+  console.log('Metadata elements found:', metadataEls.length);
+  if (metadataEls.length > 0) {
+    Array.from(metadataEls).slice(0, 5).forEach((el, i) => {
+      console.log(`  Metadata ${i}:`, {
+        text: el.textContent?.trim(),
+        class: el.className
+      });
+    });
+  }
+  
+  // Log ALL text snippets from the card that contain date-like keywords
+  console.log('Searching for date keywords in card...');
+  const allTextElements = card.querySelectorAll('*');
+  const dateKeywords = ['ago', 'posted', 'reposted', 'today', 'yesterday', 'week', 'day', 'month'];
+  const foundKeywords = [];
+  
+  Array.from(allTextElements).forEach(el => {
+    const text = el.textContent?.trim() || '';
+    if (text.length > 0 && text.length < 150) {
+      for (const keyword of dateKeywords) {
+        if (text.toLowerCase().includes(keyword)) {
+          foundKeywords.push({
+            keyword,
+            text,
+            tagName: el.tagName,
+            className: el.className
+          });
+          break; // Only add once per element
+        }
+      }
+    }
+  });
+  
+  console.log('Elements with date keywords:', foundKeywords.slice(0, 10));
+  
+  // Log the card's HTML structure (first 1000 chars)
+  console.log('Card HTML preview:', card.innerHTML.substring(0, 1000));
+  
+  console.groupEnd();
+  
   return null;
 }
 

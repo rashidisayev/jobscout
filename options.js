@@ -625,18 +625,8 @@ function displayResults(jobs) {
     
     const dateCell = document.createElement('td');
     // Handle both null and 'Unknown' for dates
-    if (job.datePosted && job.datePosted !== 'Unknown' && job.datePosted !== null) {
-      // If it's an ISO date, format it nicely
-      if (job.datePosted.match(/^\d{4}-\d{2}-\d{2}$/)) {
-        const date = new Date(job.datePosted);
-        if (!isNaN(date.getTime())) {
-          dateCell.textContent = date.toLocaleDateString();
-        } else {
-          dateCell.textContent = job.datePosted;
-        }
-      } else {
-        dateCell.textContent = job.datePosted;
-      }
+    if (job.datePosted && job.datePosted !== 'Unknown' && job.datePosted !== null && job.datePosted.trim() !== '') {
+      dateCell.textContent = job.datePosted;
     } else {
       dateCell.textContent = 'Unknown';
     }
@@ -863,7 +853,7 @@ function populateModal(job) {
   modalTitle.textContent = `${title} — ${company}`;
   
   const location = job.location && job.location !== 'Unknown' ? job.location : 'Unknown location';
-  const date = job.datePosted && job.datePosted !== 'Unknown' ? job.datePosted : 'Unknown date';
+  const date = (job.datePosted && job.datePosted !== 'Unknown' && job.datePosted.trim() !== '') ? job.datePosted : 'Unknown';
   modalMeta.textContent = `${location} · Posted: ${date}`;
   
   if (job.descriptionHtml && job.descriptionHtml.trim().length > 0) {
@@ -929,6 +919,13 @@ function getScoreTooltip(score) {
 }
 
 function showScoreInfoModal() {
+  // Get colors from the same function used in results page
+  const excellentColor = getScoreColor(75); // Use 75% as representative for 70-100% range
+  const goodColor = getScoreColor(60); // Use 60% as representative for 50-70% range
+  const moderateColor = getScoreColor(40); // Use 40% as representative for 30-50% range
+  const weakColor = getScoreColor(20); // Use 20% as representative for 10-30% range
+  const veryPoorColor = getScoreColor(5); // Use 5% as representative for 0-10% range
+  
   // Create modal overlay
   const modal = document.createElement('div');
   modal.className = 'score-info-modal';
@@ -940,23 +937,23 @@ function showScoreInfoModal() {
       </div>
       <div class="score-info-modal-body">
         <div class="score-info-item">
-          <span class="score-badge score-excellent">0.7 - 1.0</span>
+          <span class="score-badge score-excellent" style="background-color: ${excellentColor.bg}; color: ${excellentColor.text}; padding: 4px 8px; border-radius: 4px; font-weight: bold;">0.7 - 1.0</span>
           <span class="score-info-text">Excellent match (very similar content)</span>
         </div>
         <div class="score-info-item">
-          <span class="score-badge score-good">0.5 - 0.7</span>
+          <span class="score-badge score-good" style="background-color: ${goodColor.bg}; color: ${goodColor.text}; padding: 4px 8px; border-radius: 4px; font-weight: bold;">0.5 - 0.7</span>
           <span class="score-info-text">Good match (strong overlap)</span>
         </div>
         <div class="score-info-item">
-          <span class="score-badge score-moderate">0.3 - 0.5</span>
+          <span class="score-badge score-moderate" style="background-color: ${moderateColor.bg}; color: ${moderateColor.text}; padding: 4px 8px; border-radius: 4px; font-weight: bold;">0.3 - 0.5</span>
           <span class="score-info-text">Moderate match (relevant but not perfect)</span>
         </div>
         <div class="score-info-item">
-          <span class="score-badge score-weak">0.1 - 0.3</span>
+          <span class="score-badge score-weak" style="background-color: ${weakColor.bg}; color: ${weakColor.text}; padding: 4px 8px; border-radius: 4px; font-weight: bold;">0.1 - 0.3</span>
           <span class="score-info-text">Weak match (some common terms)</span>
         </div>
         <div class="score-info-item">
-          <span class="score-badge score-very-poor">0.0 - 0.1</span>
+          <span class="score-badge score-very-poor" style="background-color: ${veryPoorColor.bg}; color: ${veryPoorColor.text}; padding: 4px 8px; border-radius: 4px; font-weight: bold;">0.0 - 0.1</span>
           <span class="score-info-text">Very poor match (different fields/skills)</span>
         </div>
       </div>
