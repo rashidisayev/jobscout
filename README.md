@@ -10,6 +10,7 @@ JobScout is a Chrome Extension (Manifest V3) that helps you monitor LinkedIn Job
 - **NLP-Based Scoring**: Uses TF-IDF and cosine similarity to match job descriptions with resumes
 - **Local Storage**: All data stored locally in your browser - no external servers
 - **CSV Export**: Export all collected jobs with matching scores
+- **Google Sheets Integration**: Save jobs directly to your own Google Sheet for tracking applications
 - **Privacy-Focused**: Respects LinkedIn's Terms of Service, requires you to be logged in
 
 ## Installation
@@ -83,6 +84,51 @@ You can create these using any image editor, or use online tools like [Favicon G
   - See which resume matches best and the similarity score
 
 - **Export Data**: Click "Export CSV" in the Results tab to download all jobs as a CSV file
+
+### Google Sheets Integration (Application Tracking)
+
+JobScout can automatically save jobs to your own Google Sheet for tracking applications:
+
+**Setup** (one-time):
+
+1. **Create Your Tracking Sheet**:
+   - Create a new Google Sheet
+   - Add these column headers in Row 1: `Position`, `Application Status`, `Company`, `Applied on`, `Job Description`
+
+2. **Set up Apps Script**:
+   - In your sheet, go to **Extensions → Apps Script**
+   - Delete any existing code
+   - Copy the code from `google-apps-script.js` in this repository
+   - Click **Save**
+
+3. **Deploy as Web App**:
+   - Click **Deploy → New deployment**
+   - Click the gear icon (⚙️) and select **Web app**
+   - Set "Execute as" to **Me**
+   - Set "Who has access" to **Anyone**
+   - Click **Deploy** and copy the Web app URL (ends with `/exec`)
+   - You may need to authorize the script on first deployment
+
+4. **Connect to JobScout**:
+   - Go to JobScout Options → **Resumes** tab
+   - Paste your Web app URL in the "Google Sheets Integration" field
+   - Click **Save Sheet URL**
+   - Click **Test Connection** to verify setup
+
+**Usage**:
+- In the **Results** tab, each job card has a **Save** button
+- Clicking **Save** will:
+  - Append the job to your Google Sheet with:
+    - Position title
+    - Application Status: "Applied"
+    - Company name (with location if available)
+    - Current date (dd.mm.yyyy format)
+    - Job description URL
+- Duplicate jobs (same URL) won't be added twice
+- Button shows "✓ Saved" confirmation and stays green
+- Use the **Apply** button on the card to open the job in LinkedIn
+
+See `google-apps-script.js` for the complete Apps Script code and detailed setup instructions.
 
 ## How It Works
 

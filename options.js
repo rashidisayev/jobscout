@@ -27,6 +27,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   initializeTabs();
   await loadSearchUrls();
   await loadResumes();
+  await loadGoogleSheetUrl();
   await loadSettings();
   await loadResults();
   await updateLiveScanStatus();
@@ -50,6 +51,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('exportCsv').addEventListener('click', exportCsv);
   document.getElementById('clearAllJobs').addEventListener('click', clearAllJobs);
   document.getElementById('scanTabNow').addEventListener('click', scanTabNow);
+  document.getElementById('saveGoogleSheetUrl').addEventListener('click', saveGoogleSheetUrl);
+  document.getElementById('testGoogleSheetUrl').addEventListener('click', testGoogleSheetConnection);
+  document.getElementById('showAppsScriptHelp').addEventListener('click', showAppsScriptHelp);
   document.getElementById('sortBy').addEventListener('change', () => {
     currentPage = 1;
     loadResults();
@@ -443,6 +447,211 @@ async function deleteResume(index) {
   await loadResumes();
 }
 
+// Google Sheets Integration
+async function loadGoogleSheetUrl() {
+  const settings = await chrome.storage.local.get(['googleSheetUrl']);
+  const url = settings.googleSheetUrl || '';
+  document.getElementById('googleSheetUrl').value = url;
+  
+  if (url) {
+    updateGoogleSheetStatus('✓ Google Sheet connected', 'success');
+  }
+}
+
+async function saveGoogleSheetUrl() {
+  const input = document.getElementById('googleSheetUrl');
+  const url = input.value.trim();
+  
+  if (!url) {
+    updateGoogleSheetStatus('Please enter a Google Apps Script web app URL', 'error');
+    return;
+  }
+  
+  // Validate URL format
+  if (!url.startsWith('https://script.google.com/macros/s/') || !url.includes('/exec')) {
+    updateGoogleSheetStatus('Invalid URL format. Must be a Google Apps Script web app URL ending with /exec', 'error');
+    return;
+  }
+  
+  await chrome.storage.local.set({ googleSheetUrl: url });
+  updateGoogleSheetStatus('✓ Google Sheet URL saved successfully', 'success');
+}
+
+async function testGoogleSheetConnection() {
+  const settings = await chrome.storage.local.get(['googleSheetUrl']);
+  const url = settings.googleSheetUrl;
+  
+  if (!url) {
+    updateGoogleSheetStatus('Please save a Google Sheet URL first', 'error');
+    return;
+  }
+  
+  updateGoogleSheetStatus('Testing connection...', 'info');
+  
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        action: 'test'
+      })
+    });
+    
+    // With no-cors, we can't read the response, but if no error is thrown, it means the request went through
+    updateGoogleSheetStatus('✓ Connection test sent successfully (check your Google Sheet for a test row)', 'success');
+  } catch (error) {
+    console.error('Connection test failed:', error);
+    updateGoogleSheetStatus('✗ Connection test failed: ' + error.message, 'error');
+  }
+}
+
+function updateGoogleSheetStatus(message, type) {
+  const statusDiv = document.getElementById('googleSheetStatus');
+  statusDiv.textContent = message;
+  
+  // Remove old color classes
+  statusDiv.style.color = '';
+  
+  if (type === 'success') {
+    statusDiv.style.color = '#28a745';
+  } else if (type === 'error') {
+    statusDiv.style.color = '#dc3545';
+  } else if (type === 'info') {
+    statusDiv.style.color = '#0077b5';
+  }
+}
+
+function showAppsScriptHelp(e) {
+  e.preventDefault();
+  
+  const helpModal = document.createElement('div');
+  helpModal.className = 'score-info-modal';
+  helpModal.style.zIndex = '10001';
+  
+  helpModal.innerHTML = `
+    <div class="score-info-modal-content" style="max-width: 700px;">
+      <div class="score-info-modal-header">
+        <h3>How to Set Up Google Sheets Integration</h3>
+        <button class="score-info-modal-close" id="closeHelpModal">×</button>
+      </div>
+      <div class="score-info-modal-body" style="text-align: left; line-height: 1.6;">
+        <h4 style="margin-top: 0;">Step 1: Create Your Tracking Sheet</h4>
+        <ol style="margin-left: 20px;">
+          <li>Create a new Google Sheet</li>
+          <li>Add these column headers in Row 1: <code>Position</code>, <code>Application Status</code>, <code>Company</code>, <code>Applied on</code>, <code>Job Description</code></li>
+        </ol>
+        
+        <h4>Step 2: Create Apps Script</h4>
+        <ol style="margin-left: 20px;">
+          <li>In your sheet, go to <strong>Extensions → Apps Script</strong></li>
+          <li>Delete any existing code</li>
+          <li>Copy and paste this code:
+            <pre style="background: #f5f5f5; padding: 10px; border-radius: 4px; overflow-x: auto; font-size: 11px; margin: 10px 0;">function doPost(e) {
+  try {
+    const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+    const data = JSON.parse(e.postData.contents);
+    
+    if (data.action === 'test') {
+      sheet.appendRow(['TEST', 'TEST', 'TEST', new Date().toLocaleDateString('en-GB'), 'TEST']);
+      return ContentService.createTextOutput(JSON.stringify({success: true}));
+    }
+    
+    // Check for duplicates (optional)
+    const lastRow = sheet.getLastRow();
+    if (lastRow > 1) {
+      const urlColumn = 5; // Job Description column
+      const urls = sheet.getRange(2, urlColumn, lastRow - 1, 1).getValues();
+      for (let i = 0; i < urls.length; i++) {
+        if (urls[i][0] === data.jobUrl) {
+          return ContentService.createTextOutput(JSON.stringify({
+            success: false, 
+            error: 'duplicate'
+          }));
+        }
+      }
+    }
+    
+    sheet.appendRow([
+      data.position,
+      data.status,
+      data.company,
+      data.appliedOn,
+      data.jobUrl
+    ]);
+    
+    return ContentService.createTextOutput(JSON.stringify({success: true}));
+  } catch (error) {
+    return ContentService.createTextOutput(JSON.stringify({
+      success: false, 
+      error: error.toString()
+    }));
+  }
+}</pre>
+          </li>
+          <li>Click <strong>Save</strong> (disk icon)</li>
+        </ol>
+        
+        <h4>Step 3: Deploy as Web App</h4>
+        <ol style="margin-left: 20px;">
+          <li>Click <strong>Deploy → New deployment</strong></li>
+          <li>Click the gear icon ⚙️ and select <strong>Web app</strong></li>
+          <li>Set "Execute as" to <strong>Me</strong></li>
+          <li>Set "Who has access" to <strong>Anyone</strong></li>
+          <li>Click <strong>Deploy</strong></li>
+          <li>Copy the <strong>Web app URL</strong> (it ends with /exec)</li>
+          <li>Paste it in the field above and click Save</li>
+        </ol>
+        
+        <p style="background: #fff3cd; padding: 10px; border-radius: 4px; margin-top: 15px;">
+          <strong>Note:</strong> You may need to authorize the script on first deployment. Follow the prompts to grant permissions.
+        </p>
+        
+        <h4>Troubleshooting</h4>
+        <ul style="margin-left: 20px; line-height: 1.8;">
+          <li><strong>Error: "Cannot read properties of undefined"</strong>
+            <ul style="margin-left: 20px;">
+              <li>Make sure you deployed as <strong>Web app</strong>, not as API</li>
+              <li>Verify "Execute as" is set to <strong>Me</strong></li>
+              <li>Check "Who has access" is set to <strong>Anyone</strong></li>
+              <li>Try creating a <strong>new deployment</strong> if the old one doesn't work</li>
+            </ul>
+          </li>
+          <li><strong>Test Connection fails</strong>
+            <ul style="margin-left: 20px;">
+              <li>Check the URL ends with <code>/exec</code> (not <code>/dev</code>)</li>
+              <li>Make sure you copied the <strong>Web app URL</strong>, not the Script URL</li>
+              <li>Try opening the URL in your browser - you should see a JSON response</li>
+            </ul>
+          </li>
+          <li><strong>No data appearing in sheet</strong>
+            <ul style="margin-left: 20px;">
+              <li>Check the Apps Script logs: <strong>Executions</strong> tab in Apps Script</li>
+              <li>Make sure column headers match exactly: Position, Application Status, Company, Applied on, Job Description</li>
+              <li>Verify the script has permission to access your sheet</li>
+            </ul>
+          </li>
+        </ul>
+      </div>
+    </div>
+  `;
+  
+  document.body.appendChild(helpModal);
+  
+  const closeBtn = document.getElementById('closeHelpModal');
+  closeBtn.addEventListener('click', () => {
+    document.body.removeChild(helpModal);
+  });
+  
+  helpModal.addEventListener('click', (e) => {
+    if (e.target === helpModal) {
+      document.body.removeChild(helpModal);
+    }
+  });
+}
+
 // Settings management
 async function loadSettings() {
   const settings = await chrome.storage.local.get(['scanInterval', 'onlyNewRoles']);
@@ -743,6 +952,16 @@ function displayResults(jobs) {
       actions.append(whyBtn);
     }
     
+    // Add "Save" button to save to Google Sheets
+    const saveBtn = document.createElement('button');
+    saveBtn.textContent = 'Save';
+    saveBtn.className = 'btn btn-secondary';
+    saveBtn.style.fontSize = '12px';
+    saveBtn.addEventListener('click', async () => {
+      await saveJobToSheet(job, saveBtn);
+    });
+    actions.append(saveBtn);
+    
     footer.appendChild(labelsContainer);
     footer.appendChild(actions);
 
@@ -867,6 +1086,119 @@ function hideModal() {
 function removeDangerousNodes(root) {
   if (!root || !root.querySelectorAll) return;
   root.querySelectorAll('script, style, iframe, object, embed').forEach(node => node.remove());
+}
+
+// Save job to Google Sheets
+async function saveJobToSheet(job, buttonElement) {
+  const settings = await chrome.storage.local.get(['googleSheetUrl']);
+  const webAppUrl = settings.googleSheetUrl;
+  
+  if (!webAppUrl) {
+    showToast('Please configure Google Sheet URL in the Resumes tab first', 'error');
+    return;
+  }
+  
+  // Show loading state
+  const originalText = buttonElement.textContent;
+  buttonElement.textContent = 'Saving...';
+  buttonElement.disabled = true;
+  
+  try {
+    // Prepare data from the job card (no need to open new tab)
+    const jobUrl = job.url || job.link;
+    const title = deduplicateTitle(job.title) || 'N/A';
+    const company = job.company && job.company !== 'Unknown' ? job.company : 'N/A';
+    const location = job.location && job.location !== 'Unknown' ? job.location : '';
+    const currentDate = new Date().toLocaleDateString('en-GB'); // dd.mm.yyyy format
+    
+    // Add location to company name if available
+    const companyWithLocation = location ? `${company} (${location})` : company;
+    
+    const data = {
+      position: title,
+      status: 'Applied',
+      company: companyWithLocation,
+      appliedOn: currentDate,
+      jobUrl: jobUrl || 'N/A'
+    };
+    
+    // Send POST request to Google Apps Script
+    console.log('Sending job to Google Sheet:', data);
+    
+    try {
+      const response = await fetch(webAppUrl, {
+        method: 'POST',
+        mode: 'no-cors', // Required for Apps Script
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(data)
+      });
+      
+      // With no-cors mode, we can't read the response, but if no error is thrown,
+      // it means the request was sent successfully
+      console.log('Request sent successfully');
+      buttonElement.textContent = '✓ Saved';
+      buttonElement.style.backgroundColor = '#28a745';
+      buttonElement.style.color = 'white';
+      
+      showToast(`✓ Saved: ${title} at ${company}`, 'success');
+      
+      // Keep the button in saved state (don't reset it)
+      // This helps users track which jobs they've already saved
+      setTimeout(() => {
+        buttonElement.disabled = false; // Re-enable in case they want to save again
+      }, 1000);
+      
+    } catch (fetchError) {
+      console.error('Fetch error:', fetchError);
+      throw fetchError; // Re-throw to be caught by outer catch
+    }
+    
+  } catch (error) {
+    console.error('Error saving to Google Sheet:', error);
+    showToast('Error saving to Google Sheet: ' + error.message, 'error');
+    
+    // Reset button
+    buttonElement.textContent = originalText;
+    buttonElement.disabled = false;
+  }
+}
+
+// Show toast notification
+function showToast(message, type = 'info') {
+  // Remove existing toast if any
+  const existingToast = document.querySelector('.toast-notification');
+  if (existingToast) {
+    existingToast.remove();
+  }
+  
+  const toast = document.createElement('div');
+  toast.className = 'toast-notification';
+  toast.textContent = message;
+  
+  if (type === 'success') {
+    toast.style.backgroundColor = '#28a745';
+  } else if (type === 'error') {
+    toast.style.backgroundColor = '#dc3545';
+  } else {
+    toast.style.backgroundColor = '#0077b5';
+  }
+  
+  document.body.appendChild(toast);
+  
+  // Trigger animation
+  setTimeout(() => {
+    toast.classList.add('show');
+  }, 10);
+  
+  // Remove after 4 seconds
+  setTimeout(() => {
+    toast.classList.remove('show');
+    setTimeout(() => {
+      toast.remove();
+    }, 300);
+  }, 4000);
 }
 
 function getScoreClass(score) {
