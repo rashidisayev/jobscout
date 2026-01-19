@@ -1,6 +1,6 @@
 // Options page script for JobScout
 
-import { getJobById, archiveOldJobs } from './scripts/storage.js';
+import { getJobById, archiveOldJobs, excludeJob, isJobExcluded } from './scripts/storage.js';
 import { sanitizeHtml } from './scripts/utils.js';
 import { 
   MAX_SEARCH_URLS, 
@@ -770,6 +770,14 @@ async function loadResults() {
   // Filter out excluded jobs (low scores, etc.)
   jobs = jobs.filter(job => !job.excluded);
   
+  // Filter out manually excluded jobs ("Not Valid" action)
+  const excludedJobKeys = await import('./scripts/storage.js').then(m => m.getExcludedJobs());
+  const { getJobKey } = await import('./scripts/storage.js');
+  jobs = jobs.filter(job => {
+    const jobKey = getJobKey(job);
+    return !excludedJobKeys.has(jobKey);
+  });
+  
   // Filter out jobs with 0% scores (these are irrelevant matches)
   // Only filter if job has a bestResume field (meaning matching was attempted)
   jobs = jobs.filter(job => {
@@ -859,6 +867,201 @@ function updateLastUpdateTime(lastScanTime) {
   }
   
   lastUpdateElement.textContent = `Last updated: ${timeText}`;
+}
+
+/**
+ * Create a split-button dropdown for job actions
+ * @param {Object} job - The job object
+ * @param {Object} bestMatch - Best match data (optional)
+ * @param {HTMLElement} cardElement - The job card element
+ * @returns {HTMLElement}
+ */
+function createSplitButtonDropdown(job, bestMatch, cardElement) {
+  const container = document.createElement('div');
+  container.className = 'split-button-container';
+  
+  const jobUrl = job.url || job.link;
+  
+  // Primary "Apply" button
+  const primaryBtn = document.createElement('button');
+  primaryBtn.className = 'btn btn-primary split-button-primary';
+  primaryBtn.textContent = 'Apply';
+  primaryBtn.disabled = !jobUrl;
+  primaryBtn.addEventListener('click', async () => {
+    if (jobUrl) {
+      window.open(jobUrl, '_blank');
+      showToast('Opening job application...', 'info');
+    }
+  });
+  
+  // Dropdown toggle button
+  const dropdownBtn = document.createElement('button');
+  dropdownBtn.className = 'btn btn-primary split-button-toggle';
+  dropdownBtn.innerHTML = '▼';
+  dropdownBtn.setAttribute('aria-label', 'More actions');
+  
+  // Dropdown menu
+  const dropdownMenu = document.createElement('div');
+  dropdownMenu.className = 'split-button-dropdown';
+  dropdownMenu.style.display = 'none';
+  
+  // Build dropdown items
+  const dropdownItems = [];
+  
+  // Apply action (duplicate in dropdown for mobile)
+  dropdownItems.push({
+    label: 'Apply',
+    icon: '🔗',
+    action: async () => {
+      if (jobUrl) {
+        window.open(jobUrl, '_blank');
+        showToast('Opening job application...', 'info');
+      }
+    },
+    disabled: !jobUrl
+  });
+  
+  // Why? action (if available)
+  if (bestMatch && bestMatch.explanation) {
+    dropdownItems.push({
+      label: 'Why?',
+      icon: '❓',
+      action: () => {
+        showMatchExplanation(job, bestMatch);
+        closeDropdown();
+      }
+    });
+  }
+  
+  // Save action
+  dropdownItems.push({
+    label: 'Save to Sheet',
+    icon: '💾',
+    action: async () => {
+      closeDropdown();
+      // Create temporary button element for compatibility with saveJobToSheet
+      const tempBtn = document.createElement('button');
+      await saveJobToSheet(job, tempBtn);
+    }
+  });
+  
+  // Not Valid action (primary new feature)
+  dropdownItems.push({
+    label: 'Not Valid',
+    icon: '🚫',
+    action: async () => {
+      closeDropdown();
+      await handleNotValidAction(job, cardElement);
+    },
+    className: 'dropdown-item-danger'
+  });
+  
+  // Populate dropdown
+  dropdownItems.forEach(item => {
+    const dropdownItem = document.createElement('button');
+    dropdownItem.className = `dropdown-item ${item.className || ''}`;
+    dropdownItem.innerHTML = `<span class="dropdown-item-icon">${item.icon}</span><span class="dropdown-item-label">${item.label}</span>`;
+    dropdownItem.disabled = item.disabled || false;
+    
+    dropdownItem.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      await item.action();
+    });
+    
+    dropdownMenu.appendChild(dropdownItem);
+  });
+  
+  // Toggle dropdown
+  const toggleDropdown = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const isVisible = dropdownMenu.style.display === 'block';
+    closeAllDropdowns(); // Close any other open dropdowns
+    dropdownMenu.style.display = isVisible ? 'none' : 'block';
+  };
+  
+  const closeDropdown = () => {
+    dropdownMenu.style.display = 'none';
+  };
+  
+  dropdownBtn.addEventListener('click', toggleDropdown);
+  
+  // Close dropdown when clicking outside
+  document.addEventListener('click', (e) => {
+    if (!container.contains(e.target)) {
+      closeDropdown();
+    }
+  });
+  
+  container.appendChild(primaryBtn);
+  container.appendChild(dropdownBtn);
+  container.appendChild(dropdownMenu);
+  
+  return container;
+}
+
+/**
+ * Close all open dropdown menus
+ */
+function closeAllDropdowns() {
+  document.querySelectorAll('.split-button-dropdown').forEach(dropdown => {
+    dropdown.style.display = 'none';
+  });
+}
+
+/**
+ * Handle "Not Valid" action for a job
+ * @param {Object} job - The job object to mark as not valid
+ * @param {HTMLElement} cardElement - The job card DOM element
+ */
+async function handleNotValidAction(job, cardElement) {
+  // Confirm action
+  const title = job.title || 'this job';
+  const confirmed = confirm(
+    `Mark "${title}" as not valid?\n\n` +
+    `This job will be hidden forever and won't appear in future scans.`
+  );
+  
+  if (!confirmed) {
+    return;
+  }
+  
+  try {
+    // Add to exclusion list
+    await excludeJob(job);
+    
+    // Remove job from active jobs list
+    const { jobs = [] } = await chrome.storage.local.get(['jobs']);
+    const filteredJobs = jobs.filter(j => j.id !== job.id);
+    await chrome.storage.local.set({ jobs: filteredJobs });
+    
+    // Animate card removal
+    if (cardElement) {
+      cardElement.style.opacity = '0';
+      cardElement.style.transform = 'translateX(-20px)';
+      cardElement.style.transition = 'all 0.3s ease-out';
+      
+      setTimeout(() => {
+        cardElement.remove();
+        
+        // Check if results are now empty
+        const remainingCards = document.querySelectorAll('.job-card');
+        if (remainingCards.length === 0) {
+          const tableDiv = document.getElementById('resultsTable');
+          if (tableDiv) {
+            tableDiv.innerHTML = '<div class="empty-state"><p>No jobs to display. All jobs have been filtered.</p></div>';
+          }
+        }
+      }, 300);
+    }
+    
+    showToast('Job marked as not valid and excluded', 'success');
+    
+  } catch (error) {
+    console.error('Error excluding job:', error);
+    showToast('Failed to exclude job: ' + (error?.message || 'Unknown error'), 'error');
+  }
 }
 
 function displayResults(jobs) {
@@ -997,40 +1200,9 @@ function displayResults(jobs) {
     const actions = document.createElement('div');
     actions.className = 'job-actions';
 
-    // Add "Apply" button to open job URL
-    const applyBtn = document.createElement('button');
-    applyBtn.textContent = 'Apply';
-    applyBtn.className = 'btn btn-primary';
-    applyBtn.style.fontSize = '12px';
-    const jobUrl = job.url || job.link;
-    if (jobUrl) {
-      applyBtn.addEventListener('click', () => {
-        window.open(jobUrl, '_blank');
-      });
-    } else {
-      applyBtn.disabled = true;
-    }
-    actions.append(applyBtn);
-    
-    // Add "Why?" button if we have match explanation
-    if (bestMatch && bestMatch.explanation) {
-      const whyBtn = document.createElement('button');
-      whyBtn.textContent = 'Why?';
-      whyBtn.className = 'btn btn-secondary';
-      whyBtn.style.fontSize = '12px';
-      whyBtn.addEventListener('click', () => showMatchExplanation(job, bestMatch));
-      actions.append(whyBtn);
-    }
-    
-    // Add "Save" button to save to Google Sheets
-    const saveBtn = document.createElement('button');
-    saveBtn.textContent = 'Save';
-    saveBtn.className = 'btn btn-secondary';
-    saveBtn.style.fontSize = '12px';
-    saveBtn.addEventListener('click', async () => {
-      await saveJobToSheet(job, saveBtn);
-    });
-    actions.append(saveBtn);
+    // Create split-button dropdown for actions
+    const splitButton = createSplitButtonDropdown(job, bestMatch, card);
+    actions.appendChild(splitButton);
     
     footer.appendChild(labelsContainer);
     footer.appendChild(actions);

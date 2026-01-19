@@ -397,6 +397,27 @@ async function handleJobResults(jobs = [], options = {}) {
     return 0;
   }
   
+  // Filter out excluded jobs early (before any processing)
+  const { getExcludedJobs, getJobKey } = await import('./scripts/storage.js');
+  const excludedJobKeys = await getExcludedJobs();
+  
+  const filteredJobs = jobs.filter(job => {
+    if (!job) return false;
+    const jobKey = getJobKey(job);
+    const isExcluded = excludedJobKeys.has(jobKey);
+    if (isExcluded) {
+      console.log(`Filtering out excluded job: ${job.title || 'Unknown'} (${jobKey})`);
+    }
+    return !isExcluded;
+  });
+  
+  if (filteredJobs.length === 0) {
+    console.log('All jobs were excluded, no jobs to process');
+    return 0;
+  }
+  
+  console.log(`Processing ${filteredJobs.length} jobs (${jobs.length - filteredJobs.length} excluded)`);
+  
   const { forceRescan = false } = options;
   const existing = await chrome.storage.local.get(['jobs', 'lastSeenJobIds', 'resumes']);
   const existingJobs = existing.jobs || [];
@@ -417,7 +438,7 @@ async function handleJobResults(jobs = [], options = {}) {
   const mergedJobs = existingJobs.slice();
   let newJobsCount = 0;
   
-  for (const incoming of jobs) {
+  for (const incoming of filteredJobs) {
     if (!incoming) continue;
     
     const jobUrl = incoming.url || incoming.link;

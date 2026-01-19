@@ -212,3 +212,102 @@ export async function getArchivedJobs() {
 export async function clearArchivedJobs() {
   await chrome.storage.local.set({ archivedJobs: [] });
 }
+
+/**
+ * Job Exclusion Management
+ * Excluded jobs are marked as "not valid" and will never appear again
+ */
+
+/**
+ * Generate a unique key for a job (prefer URL, fallback to composite key)
+ * @param {Job} job
+ * @returns {string}
+ */
+export function getJobKey(job) {
+  // Prefer URL as the most stable unique identifier
+  if (job.url) {
+    // Normalize URL (remove query params, trailing slashes)
+    try {
+      const url = new URL(job.url);
+      return `url:${url.origin}${url.pathname}`.replace(/\/$/, '');
+    } catch (e) {
+      // If URL parsing fails, use as-is
+      return `url:${job.url}`;
+    }
+  }
+  
+  // Fallback: composite key from job attributes
+  const company = (job.company || '').toLowerCase().trim();
+  const title = (job.title || '').toLowerCase().trim();
+  const location = (job.location || '').toLowerCase().trim();
+  const datePosted = (job.datePosted || '').toLowerCase().trim();
+  
+  return `composite:${company}|${title}|${location}|${datePosted}`;
+}
+
+/**
+ * Get all excluded job keys
+ * @returns {Promise<Set<string>>}
+ */
+export async function getExcludedJobs() {
+  const { excludedJobs = [] } = await chrome.storage.local.get(['excludedJobs']);
+  return new Set(excludedJobs);
+}
+
+/**
+ * Check if a job is excluded
+ * @param {Job} job
+ * @returns {Promise<boolean>}
+ */
+export async function isJobExcluded(job) {
+  const excluded = await getExcludedJobs();
+  const jobKey = getJobKey(job);
+  return excluded.has(jobKey);
+}
+
+/**
+ * Add a job to the exclusion list
+ * @param {Job} job
+ * @returns {Promise<void>}
+ */
+export async function excludeJob(job) {
+  const excluded = await getExcludedJobs();
+  const jobKey = getJobKey(job);
+  
+  excluded.add(jobKey);
+  
+  // Convert Set to Array for storage
+  await chrome.storage.local.set({ excludedJobs: Array.from(excluded) });
+  
+  console.log(`Excluded job: ${jobKey}`);
+}
+
+/**
+ * Remove a job from the exclusion list
+ * @param {Job} job
+ * @returns {Promise<void>}
+ */
+export async function unexcludeJob(job) {
+  const excluded = await getExcludedJobs();
+  const jobKey = getJobKey(job);
+  
+  excluded.delete(jobKey);
+  
+  await chrome.storage.local.set({ excludedJobs: Array.from(excluded) });
+  
+  console.log(`Un-excluded job: ${jobKey}`);
+}
+
+/**
+ * Clear all excluded jobs (dev/admin function)
+ * @returns {Promise<number>} Number of excluded jobs that were cleared
+ */
+export async function clearExcludedJobs() {
+  const excluded = await getExcludedJobs();
+  const count = excluded.size;
+  
+  await chrome.storage.local.set({ excludedJobs: [] });
+  
+  console.log(`Cleared ${count} excluded jobs`);
+  return count;
+}
