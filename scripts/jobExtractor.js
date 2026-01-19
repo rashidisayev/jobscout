@@ -43,11 +43,19 @@ export function extractJsonLd(doc) {
  * @param {Object} jsonLd - Optional JSON-LD data
  * @returns {string}
  */
+function stripVerificationSuffix(title) {
+  if (!title || typeof title !== 'string') return title;
+  return title
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/\s*(?:[•·\-—–|]\s*)?with\s+verification\s*$/i, '')
+    .trim();
+}
+
 export function extractTitle(card, jsonLd = null) {
   // Priority 1: JSON-LD
   if (jsonLd && jsonLd.title) {
     console.log('[extractTitle] Found from JSON-LD');
-    return jsonLd.title.trim();
+    return stripVerificationSuffix(jsonLd.title.trim());
   }
   
   // Priority 2: Most specific selectors within card
@@ -65,7 +73,7 @@ export function extractTitle(card, jsonLd = null) {
       const text = element.textContent?.trim();
       if (text && text.length > 0 && text.length < 200) {
         console.log(`[extractTitle] Found from selector: ${selector}`);
-        return text;
+        return stripVerificationSuffix(text);
       }
     }
   }
@@ -81,7 +89,7 @@ export function extractTitle(card, jsonLd = null) {
         const link = card.querySelector('a[href*="/jobs/view/"]');
         if (link && link.textContent.trim() === text) {
           console.log(`[extractTitle] Found from generic selector: ${selector}`);
-          return text;
+          return stripVerificationSuffix(text);
         }
       }
     }
@@ -93,7 +101,7 @@ export function extractTitle(card, jsonLd = null) {
     const text = link.textContent?.trim();
     if (text && text.length > 0) {
       console.log('[extractTitle] Found from link text');
-      return text;
+      return stripVerificationSuffix(text);
     }
   }
   

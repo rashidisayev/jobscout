@@ -1500,19 +1500,14 @@ async function archiveOldJobsIfNeeded() {
 function deduplicateTitle(title) {
   if (!title || typeof title !== 'string') return title;
   
-  // Check if title ends with "with verification" and handle it separately
-  const withVerificationPattern = /\s+with\s+verification\s*$/i;
-  const hasVerification = withVerificationPattern.test(title);
-  let verificationSuffix = '';
-  
-  if (hasVerification) {
-    // Extract the "with verification" suffix (preserve original casing)
-    const match = title.match(/\s+(with\s+verification)\s*$/i);
-    if (match) {
-      verificationSuffix = ' ' + match[1]; // Keep original casing
-      title = title.replace(withVerificationPattern, '').trim();
-    }
-  }
+  // If title ends with "with verification", always strip it.
+  // LinkedIn sometimes appends this suffix; we don't want it in the saved/display title.
+  title = title
+    // Remove zero-width chars that can break suffix matching.
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    // Remove an optional separator + the suffix (case-insensitive).
+    .replace(/\s*(?:[•·\-—–|]\s*)?with\s+verification\s*$/i, '')
+    .trim();
   
   // First, normalize spaces and handle cases where duplicates have no space between them
   // Add space before capital letters that follow closing parentheses/brackets (common pattern)
@@ -1544,12 +1539,12 @@ function deduplicateTitle(title) {
     
     // Check exact match
     if (firstHalf === secondHalf && firstHalf.length > 0) {
-      return firstHalf + verificationSuffix;
+      return firstHalf;
     }
     
     // Check with potential space differences
     if (firstHalf.replace(/\s+/g, ' ') === secondHalf.replace(/\s+/g, ' ') && firstHalf.length > 0) {
-      return firstHalf + verificationSuffix;
+      return firstHalf;
     }
   }
   
@@ -1564,7 +1559,7 @@ function deduplicateTitle(title) {
     const secondHalf = wordsArray.slice(midPoint).join(' ');
     
     if (firstHalf === secondHalf && firstHalf.length > 0) {
-      return firstHalf + verificationSuffix;
+      return firstHalf;
     }
   }
   
@@ -1580,7 +1575,7 @@ function deduplicateTitle(title) {
       
       if (startPhrase === endPhrase && startPhrase.length > 0) {
         // Remove the duplicate at the end
-        return wordsArray.slice(0, -phraseLength).join(' ') + verificationSuffix;
+        return wordsArray.slice(0, -phraseLength).join(' ');
       }
     }
   }
@@ -1602,19 +1597,13 @@ function deduplicateTitle(title) {
       
       // If we removed duplicates, reconstruct
       if (uniqueParts.length < parts.length) {
-        return uniqueParts.join(' — ') + verificationSuffix;
+        return uniqueParts.join(' — ');
       }
     }
   }
   
   const finalResult = result.trim();
-  
-  // Only add verification suffix if it's not already in the result
-  // (in case "with verification" was part of the duplicated phrase)
-  if (verificationSuffix && !finalResult.toLowerCase().endsWith('with verification')) {
-    return finalResult + verificationSuffix;
-  }
-  
+
   return finalResult;
 }
 

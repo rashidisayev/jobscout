@@ -7,6 +7,14 @@ export function exportToCsv(jobs) {
   if (!jobs || jobs.length === 0) {
     throw new Error('No jobs to export');
   }
+
+  const stripVerificationSuffix = (title) => {
+    if (!title || typeof title !== 'string') return title || '';
+    return title
+      .replace(/[\u200B-\u200D\uFEFF]/g, '')
+      .replace(/\s*(?:[•·\-—–|]\s*)?with\s+verification\s*$/i, '')
+      .trim();
+  };
   
   // CSV headers
   const headers = [
@@ -24,7 +32,7 @@ export function exportToCsv(jobs) {
   // Convert jobs to CSV rows
   const rows = jobs.map(job => [
     formatDate(job.foundAt),
-    escapeCsvField(job.title || ''),
+    escapeCsvField(stripVerificationSuffix(job.title || '')),
     escapeCsvField(job.company || ''),
     escapeCsvField(job.location || ''),
     escapeCsvField(job.datePosted || ''),
