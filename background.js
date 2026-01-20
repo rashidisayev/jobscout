@@ -434,8 +434,30 @@ async function handleJobResults(jobs = [], options = {}) {
   }
   
   // Filter out excluded jobs early (before any processing)
-  const { getExcludedJobs, getJobKey } = await import('./scripts/storage.js');
-  const excludedJobKeys = await getExcludedJobs();
+  // NOTE: MV3 service worker cannot use dynamic import().
+  // We keep the exclusion logic here using storage + a local getJobKey helper.
+  const { excludedJobs = [] } = await chrome.storage.local.get(['excludedJobs']);
+  const excludedJobKeys = new Set(excludedJobs);
+
+  function getJobKey(job) {
+    // Prefer URL as the most stable unique identifier
+    const urlStr = job?.url || job?.link;
+    if (urlStr) {
+      try {
+        const url = new URL(urlStr);
+        return `url:${url.origin}${url.pathname}`.replace(/\/$/, '');
+      } catch (e) {
+        return `url:${urlStr}`;
+      }
+    }
+
+    // Fallback: composite key from job attributes
+    const company = String(job?.company || '').toLowerCase().trim();
+    const title = String(job?.title || '').toLowerCase().trim();
+    const location = String(job?.location || '').toLowerCase().trim();
+    const datePosted = String(job?.datePosted || '').toLowerCase().trim();
+    return `composite:${company}|${title}|${location}|${datePosted}`;
+  }
   
   const filteredJobs = jobs.filter(job => {
     if (!job) return false;
