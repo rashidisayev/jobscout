@@ -195,18 +195,6 @@ header h1::before {
   transform: translateY(-0.5px);
 }
 
-.results-controls .btn-danger {
-  /* Match Results toolbar button sizing (Export/Statistics/Scan/Clear) */
-  padding: 9px 18px;
-  font-size: 13px;
-  box-shadow: 0 10px 20px rgba(239, 68, 68, 0.34);
-}
-
-.results-controls .btn-danger:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 14px 28px rgba(239, 68, 68, 0.42);
-}
-
 .list {
   display: flex;
   flex-direction: column;
@@ -1051,4 +1039,15 @@ footer {
   color: #b91c1c;
 }
 
+/* Results toolbar button sizing consistency */
+.results-controls .btn-danger {
+  padding: 9px 18px;
+  font-size: 13px;
+  box-shadow: 0 10px 20px rgba(239, 68, 68, 0.34);
+}
+
+.results-controls .btn-danger:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 14px 28px rgba(239, 68, 68, 0.42);
+}
 

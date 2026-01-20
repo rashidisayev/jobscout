@@ -36,9 +36,17 @@ chrome.runtime.onInstalled.addListener(async () => {
 // Handle alarms
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === 'scan') {
-    const settings = await chrome.storage.local.get(['scanningEnabled']);
-    if (settings.scanningEnabled) {
+    const settings = await chrome.storage.local.get(['scanningEnabled', 'isPaused']);
+    const isEnabled = settings.scanningEnabled !== false;
+    const isPaused = settings.isPaused === true;
+    
+    if (isEnabled && !isPaused) {
+      console.log('Alarm triggered: Starting scheduled scan');
       await performScan();
+    } else if (isPaused) {
+      console.log('Alarm triggered but scanning is paused, skipping...');
+    } else {
+      console.log('Alarm triggered but scanning is disabled, skipping...');
     }
   }
 });
@@ -58,6 +66,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       const newState = !settings.scanningEnabled;
       chrome.storage.local.set({ scanningEnabled: newState });
       sendResponse({ enabled: newState });
+    });
+    return true;
+  } else if (request.action === 'pauseScanning') {
+    chrome.storage.local.set({ isPaused: true }).then(() => {
+      console.log('Scanning paused by user');
+      sendResponse({ success: true, paused: true });
+    });
+    return true;
+  } else if (request.action === 'resumeScanning') {
+    chrome.storage.local.set({ isPaused: false }).then(() => {
+      console.log('Scanning resumed by user');
+      sendResponse({ success: true, paused: false });
     });
     return true;
   } else if (request.action === 'jobResults') {
@@ -193,6 +213,14 @@ async function performScan() {
   
   // Process each search URL
   for (let searchIndex = 0; searchIndex < settings.searchUrls.length; searchIndex++) {
+    // Check for pause before processing each search URL
+    const { isPaused = false } = await chrome.storage.local.get(['isPaused']);
+    if (isPaused) {
+      console.log('Scan paused by user, stopping scan loop...');
+      await updateRunState({ status: 'idle' });
+      return;
+    }
+    
     const searchUrlItem = settings.searchUrls[searchIndex];
     const normalizedSearch = normalizeSearchUrlItem(searchUrlItem);
     const searchUrl = normalizedSearch.url;
@@ -211,6 +239,14 @@ async function performScan() {
       const pageStarts = Array.from({ length: MAX_PAGES_PER_URL }, (_, i) => i * 25);
       
       for (let pageIndex = 0; pageIndex < pageStarts.length; pageIndex++) {
+        // Check for pause before processing each page
+        const { isPaused = false } = await chrome.storage.local.get(['isPaused']);
+        if (isPaused) {
+          console.log('Scan paused by user during page iteration, stopping...');
+          await updateRunState({ status: 'idle' });
+          return;
+        }
+        
         const start = pageStarts[pageIndex];
         const pageUrl = addStartParameter(searchUrl, start);
         

@@ -32,6 +32,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadSettings();
   await loadResults();
   await updateLiveScanStatus();
+  await initializePauseButton();
   
   // Update last update time every minute
   setInterval(async () => {
@@ -53,6 +54,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('openStatistics').addEventListener('click', openStatisticsSheet);
   document.getElementById('clearAllJobs').addEventListener('click', clearAllJobs);
   document.getElementById('scanTabNow').addEventListener('click', scanTabNow);
+  document.getElementById('pauseScanning').addEventListener('click', togglePauseScanning);
   document.getElementById('saveGoogleSheetUrl').addEventListener('click', saveGoogleSheetUrl);
   document.getElementById('saveGoogleSheetStatsUrl').addEventListener('click', saveGoogleSheetStatsUrl);
   document.getElementById('testGoogleSheetUrl').addEventListener('click', testGoogleSheetConnection);
@@ -83,6 +85,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       // Update results if jobs changed
       if (changes.jobs) {
         loadResults();
+      }
+      
+      // Update pause button if pause state changed
+      if (changes.isPaused) {
+        updatePauseButton(changes.isPaused.newValue);
       }
     }
   });
@@ -1688,9 +1695,64 @@ async function scanTabNow() {
     const button = document.getElementById('scanTabNow');
     if (button) {
       button.disabled = false;
-      button.textContent = 'Scan Tab Now';
+      button.textContent = 'Scan';
     }
   }
+}
+
+// Toggle pause/resume scanning
+async function togglePauseScanning() {
+  const button = document.getElementById('pauseScanning');
+  if (!button) return;
+  
+  button.disabled = true;
+  
+  try {
+    const { isPaused = false } = await chrome.storage.local.get(['isPaused']);
+    const newPausedState = !isPaused;
+    
+    // Update pause state
+    await chrome.storage.local.set({ isPaused: newPausedState });
+    
+    // Notify background script
+    chrome.runtime.sendMessage({ 
+      action: newPausedState ? 'pauseScanning' : 'resumeScanning' 
+    });
+    
+    // Update button
+    updatePauseButton(newPausedState);
+    
+    showToast(
+      newPausedState ? 'Scanning paused' : 'Scanning resumed', 
+      'success'
+    );
+    
+  } catch (error) {
+    console.error('Error toggling pause:', error);
+    showToast('Failed to toggle pause', 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+// Update pause button appearance
+function updatePauseButton(isPaused) {
+  const button = document.getElementById('pauseScanning');
+  if (!button) return;
+  
+  if (isPaused) {
+    button.textContent = 'Resume';
+    button.className = 'btn btn-primary';
+  } else {
+    button.textContent = 'Pause';
+    button.className = 'btn btn-secondary';
+  }
+}
+
+// Initialize pause button state on page load
+async function initializePauseButton() {
+  const { isPaused = false } = await chrome.storage.local.get(['isPaused']);
+  updatePauseButton(isPaused);
 }
 
 async function clearAllJobs() {

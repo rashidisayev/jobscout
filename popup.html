@@ -4,181 +4,65 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>JobScout</title>
-  <style>
-    body {
-      width: 320px;
-      padding: 16px;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      margin: 0;
-    }
-    .header {
-      text-align: center;
-      margin-bottom: 16px;
-    }
-    .header h1 {
-      margin: 0;
-      font-size: 20px;
-      color: #0077b5;
-    }
-    .stats {
-      background: #f3f2ef;
-      padding: 12px;
-      border-radius: 8px;
-      margin-bottom: 12px;
-    }
-    .stat-row {
-      display: flex;
-      justify-content: space-between;
-      margin-bottom: 8px;
-    }
-    .stat-row:last-child {
-      margin-bottom: 0;
-    }
-    .stat-label {
-      color: #666;
-      font-size: 14px;
-    }
-    .stat-value {
-      font-weight: 600;
-      color: #000;
-      font-size: 14px;
-    }
-    .actions {
-      display: flex;
-      gap: 8px;
-      margin-bottom: 12px;
-    }
-    button {
-      flex: 1;
-      padding: 10px;
-      border: none;
-      border-radius: 6px;
-      font-size: 14px;
-      font-weight: 500;
-      cursor: pointer;
-      transition: background 0.2s;
-    }
-    .btn-primary {
-      background: #0077b5;
-      color: white;
-    }
-    .btn-primary:hover {
-      background: #005885;
-    }
-    .btn-secondary {
-      background: #e0e0e0;
-      color: #333;
-    }
-    .btn-secondary:hover {
-      background: #d0d0d0;
-    }
-    .btn-danger {
-      background: #dc3545;
-      color: white;
-    }
-    .btn-danger:hover {
-      background: #c82333;
-    }
-    .status {
-      text-align: center;
-      padding: 8px;
-      border-radius: 6px;
-      font-size: 12px;
-      margin-top: 8px;
-    }
-    .status.scanning {
-      background: #fff3cd;
-      color: #856404;
-    }
-    .status.paused {
-      background: #f8d7da;
-      color: #721c24;
-    }
-    .status.active {
-      background: #d4edda;
-      color: #155724;
-    }
-    .footer {
-      text-align: center;
-      margin-top: 12px;
-      padding-top: 12px;
-      border-top: 1px solid #e0e0e0;
-    }
-    .footer a {
-      color: #0077b5;
-      text-decoration: none;
-      font-size: 12px;
-    }
-    .footer a:hover {
-      text-decoration: underline;
-    }
-    .scan-status {
-      background: #e7f3ff;
-      padding: 12px;
-      border-radius: 8px;
-      margin-bottom: 12px;
-      border: 1px solid #0077b5;
-    }
-    .scan-status .stat-row {
-      font-size: 12px;
-    }
-    .scan-status .stat-value {
-      font-size: 12px;
-    }
-  </style>
+  <link rel="stylesheet" href="shared.css">
+  <link rel="stylesheet" href="popup.css">
 </head>
 <body>
-  <div class="header">
-    <h1>🔍 JobScout</h1>
-  </div>
-  
-  <div class="stats">
-    <div class="stat-row">
-      <span class="stat-label">New Jobs:</span>
-      <span class="stat-value" id="newJobsCount">0</span>
+  <div class="popup-container">
+    <div class="popup-header">
+      <h1>🔍 JobScout</h1>
     </div>
-    <div class="stat-row">
-      <span class="stat-label">Total Jobs:</span>
-      <span class="stat-value" id="totalJobsCount">0</span>
+    
+    <!-- Stats Section -->
+    <div class="section stats-section">
+      <div class="stat-row">
+        <span class="stat-label">New Jobs:</span>
+        <span class="stat-value" id="newJobsCount">0</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">Total Jobs:</span>
+        <span class="stat-value" id="totalJobsCount">0</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">Last Scan:</span>
+        <span class="stat-value" id="lastScanTime">Never</span>
+      </div>
     </div>
-    <div class="stat-row">
-      <span class="stat-label">Last Scan:</span>
-      <span class="stat-value" id="lastScanTime">Never</span>
+    
+    <!-- Live Scanning Status (shown when scanning) -->
+    <div id="scanStatus" class="section scan-status-section hidden">
+      <h3>Scanning Status</h3>
+      <div class="stat-row">
+        <span class="stat-label">Pages:</span>
+        <span class="stat-value" id="pagesProcessed">0</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">Jobs Scanned:</span>
+        <span class="stat-value" id="jobsScanned">0</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">New This Run:</span>
+        <span class="stat-value" id="newJobsRun">0</span>
+      </div>
     </div>
-  </div>
-  
-  <!-- Live scanning status -->
-  <div id="scanStatus" class="scan-status" style="display: none;">
-    <div class="stat-row">
-      <span class="stat-label">Status:</span>
-      <span class="stat-value" id="scanStatusText">Idle</span>
+    
+    <!-- Status Indicator -->
+    <div id="statusIndicator" class="status-indicator active">
+      <span id="statusText">Scanning Active</span>
     </div>
-    <div class="stat-row">
-      <span class="stat-label">Pages:</span>
-      <span class="stat-value" id="pagesProcessed">0</span>
+    
+    <!-- Control Buttons -->
+    <div class="control-buttons">
+      <button id="scanNow" class="btn btn-primary">Scan Now</button>
+      <button id="togglePause" class="btn btn-secondary">Pause</button>
     </div>
-    <div class="stat-row">
-      <span class="stat-label">Jobs Scanned:</span>
-      <span class="stat-value" id="jobsScanned">0</span>
+    
+    <!-- Footer -->
+    <div class="popup-footer">
+      <a href="#" id="openOptions">⚙️ Open Settings</a>
     </div>
-    <div class="stat-row">
-      <span class="stat-label">New This Run:</span>
-      <span class="stat-value" id="newJobsRun">0</span>
-    </div>
-  </div>
-  
-  <div class="actions">
-    <button id="scanNow" class="btn-primary">Scan Now</button>
-    <button id="toggleScanning" class="btn-secondary">Pause</button>
-  </div>
-  
-  <div id="status" class="status active">Scanning enabled</div>
-  
-  <div class="footer">
-    <a href="#" id="openOptions">Open Options</a>
   </div>
   
   <script src="popup.js"></script>
 </body>
 </html>
-
