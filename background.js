@@ -1326,6 +1326,12 @@ function extractDescriptionFromPage() {
       '.jobs-details-top-card__primary-description li'
     ],
     jobDetailDate: [
+      // Newer LinkedIn unified job details header
+      '.job-details-jobs-unified-top-card__tertiary-description-container',
+      '.job-details-jobs-unified-top-card__tertiary-description-container .tvm__text--low-emphasis',
+      '.job-details-jobs-unified-top-card__tertiary-description-container [class*="tvm__text"]',
+      '[class*="unified-top-card"] [class*="tertiary-description"]',
+      '[class*="unified-top-card"] .tvm__text--low-emphasis',
       '.jobs-details-top-card__job-insight',
       '.jobs-details-top-card__job-insight-text-item',
       'span[data-testid="job-posted-date"]',
@@ -1557,6 +1563,16 @@ function extractDescriptionFromPage() {
   };
   
   const getDate = () => {
+    const extractRelativeDate = (raw) => {
+      if (!raw) return null;
+      const text = String(raw)
+        .replace(/[\u200B-\u200D\uFEFF]/g, '')
+        .replace(/^[\s·•|–—\-:,]+/g, '')
+        .trim();
+      const match = text.match(/(\d+\s*(?:second|minute|hour|day|week|month)s?\s*ago|today|yesterday|just\s*now)/i);
+      return match ? match[1].trim() : null;
+    };
+
     // Simple approach - try all date selectors (similar to location)
     for (const selector of SELECTORS.jobDetailDate) {
       const el = document.querySelector(selector);
@@ -1577,10 +1593,13 @@ function extractDescriptionFromPage() {
             if (text) return text;
           }
         } else if (text) {
+          const relative = extractRelativeDate(text);
+          if (relative) return relative;
           // Extract date from "Reposted/Posted X weeks ago" format
           const dateMatch = text.match(/(?:reposted|posted)\s+(.+)/i);
           if (dateMatch && dateMatch[1]) {
-            return dateMatch[1].trim();
+            const cleaned = extractRelativeDate(dateMatch[1]) || dateMatch[1].trim();
+            return cleaned;
           }
           return text;
         }
@@ -1604,10 +1623,13 @@ function extractDescriptionFromPage() {
         } catch (e) {
           const text = el.textContent?.trim();
           if (text) {
+            const relative = extractRelativeDate(text);
+            if (relative) return relative;
             // Extract date from "Reposted/Posted X weeks ago" format
             const dateMatch = text.match(/(?:reposted|posted)\s+(.+)/i);
             if (dateMatch && dateMatch[1]) {
-              return dateMatch[1].trim();
+              const cleaned = extractRelativeDate(dateMatch[1]) || dateMatch[1].trim();
+              return cleaned;
             }
             return text;
           }
@@ -1615,10 +1637,13 @@ function extractDescriptionFromPage() {
       } else {
         const text = el.textContent?.trim();
         if (text) {
+          const relative = extractRelativeDate(text);
+          if (relative) return relative;
           // Extract date from "Reposted/Posted X weeks ago" format
           const dateMatch = text.match(/(?:reposted|posted)\s+(.+)/i);
           if (dateMatch && dateMatch[1]) {
-            return dateMatch[1].trim();
+            const cleaned = extractRelativeDate(dateMatch[1]) || dateMatch[1].trim();
+            return cleaned;
           }
           return text;
         }
@@ -1630,10 +1655,13 @@ function extractDescriptionFromPage() {
     for (const el of allTimeElements) {
       const text = el.textContent?.trim();
       if (text) {
+        const relative = extractRelativeDate(text);
+        if (relative) return relative;
         // Extract date from "Reposted/Posted X weeks ago" format
         const dateMatch = text.match(/(?:reposted|posted)\s+(.+)/i);
         if (dateMatch && dateMatch[1]) {
-          return dateMatch[1].trim();
+          const cleaned = extractRelativeDate(dateMatch[1]) || dateMatch[1].trim();
+          return cleaned;
         }
         return text;
       }

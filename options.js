@@ -19,6 +19,22 @@ let modalBody = null;
 let activeJobId = null;
 let currentPage = 1;
 
+// Results filter: excluded countries (persisted in chrome.storage.local)
+let excludedCountries = [];
+const DEFAULT_COUNTRY_SUGGESTIONS = [
+  'United States', 'USA', 'Canada', 'United Kingdom', 'UK', 'Ireland',
+  'Germany', 'France', 'Spain', 'Italy', 'Netherlands', 'Belgium', 'Switzerland', 'Austria',
+  'Sweden', 'Norway', 'Denmark', 'Finland', 'Poland', 'Czech Republic', 'Romania', 'Hungary',
+  'Portugal', 'Greece', 'Turkey',
+  'India', 'Pakistan', 'Bangladesh',
+  'Singapore', 'Malaysia', 'Philippines', 'Indonesia', 'Thailand', 'Vietnam',
+  'Japan', 'South Korea', 'China', 'Hong Kong', 'Taiwan',
+  'Australia', 'New Zealand',
+  'Israel', 'United Arab Emirates', 'UAE', 'Saudi Arabia',
+  'Brazil', 'Mexico', 'Argentina', 'Chile', 'Colombia',
+  'South Africa', 'Nigeria', 'Kenya', 'Egypt', 'Morocco'
+];
+
 document.addEventListener('DOMContentLoaded', async () => {
   modal = document.getElementById('job-modal');
   modalTitle = document.getElementById('modal-title');
@@ -30,6 +46,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadGoogleSheetUrl();
   await loadGoogleSheetStatsUrl();
   await loadSettings();
+  await initializeExcludedCountriesFilter();
   await loadResults();
   await updateLiveScanStatus();
   await initializePauseButton();
@@ -86,6 +103,15 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (changes.jobs) {
         loadResults();
       }
+
+      // Update results + UI if excluded countries changed
+      if (changes.excludedCountries) {
+        excludedCountries = Array.isArray(changes.excludedCountries.newValue)
+          ? changes.excludedCountries.newValue
+          : [];
+        renderExcludedCountryChips();
+        loadResults();
+      }
       
       // Update pause button if pause state changed
       if (changes.isPaused) {
@@ -108,6 +134,280 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
   
 });
+
+function normalizeCountryToken(value) {
+  return String(value || '')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLowerCase();
+}
+
+function escapeRegExp(str) {
+  return String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function buildExcludedCountryMatchers(countryList) {
+  const normalized = (Array.isArray(countryList) ? countryList : [])
+    .map(normalizeCountryToken)
+    .filter(Boolean);
+
+  // Expand common aliases so user can type either form
+  const aliasPairs = [
+    ['us', ['usa', 'united states', 'united states of america', 'u.s.', 'u.s.a.']],
+    ['usa', ['us', 'united states', 'united states of america', 'u.s.', 'u.s.a.']],
+    ['united states', ['us', 'usa', 'united states of america', 'u.s.', 'u.s.a.']],
+    ['uk', ['united kingdom', 'u.k.', 'great britain', 'britain']],
+    ['united kingdom', ['uk', 'u.k.', 'great britain', 'britain']],
+    ['uae', ['united arab emirates']]
+  ];
+
+  const expanded = new Set();
+  normalized.forEach(v => expanded.add(v));
+  for (const [key, aliases] of aliasPairs) {
+    if (expanded.has(key)) {
+      aliases.forEach(a => expanded.add(normalizeCountryToken(a)));
+    }
+  }
+
+  // Return a list of matchers (short tokens -> word boundary, long tokens -> substring)
+  return Array.from(expanded).map(token => {
+    const isShort = token.length <= 3;
+    return {
+      token,
+      type: isShort ? 'word' : 'substring',
+      regex: isShort ? new RegExp(`\\b${escapeRegExp(token)}\\b`, 'i') : null
+    };
+  });
+}
+
+function locationMatchesExcludedCountries(location, matchers) {
+  if (!matchers || matchers.length === 0) return false;
+  const text = String(location || '').toLowerCase();
+  if (!text) return false;
+  for (const m of matchers) {
+    if (!m?.token) continue;
+    if (m.type === 'word') {
+      if (m.regex && m.regex.test(text)) return true;
+    } else {
+      if (text.includes(m.token)) return true;
+    }
+  }
+  return false;
+}
+
+function renderExcludedCountryChips() {
+  const chipsEl = document.getElementById('excludedCountriesChips');
+  if (!chipsEl) return;
+
+  chipsEl.innerHTML = '';
+  const unique = [];
+  const seen = new Set();
+  for (const c of (excludedCountries || [])) {
+    const trimmed = String(c || '').trim();
+    const key = normalizeCountryToken(trimmed);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    unique.push(trimmed);
+  }
+
+  excludedCountries = unique;
+
+  unique.forEach(country => {
+    const chip = document.createElement('span');
+    chip.className = 'tag-chip';
+    chip.textContent = country;
+
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'tag-chip-remove';
+    removeBtn.type = 'button';
+    removeBtn.setAttribute('aria-label', `Remove ${country}`);
+    removeBtn.textContent = '×';
+    removeBtn.addEventListener('click', async () => {
+      await removeExcludedCountry(country);
+    });
+
+    chip.appendChild(removeBtn);
+    chipsEl.appendChild(chip);
+  });
+}
+
+async function saveExcludedCountries() {
+  await chrome.storage.local.set({ excludedCountries });
+}
+
+async function addExcludedCountry(rawValue) {
+  const value = String(rawValue || '').trim();
+  if (!value) return;
+
+  const key = normalizeCountryToken(value);
+  const exists = (excludedCountries || []).some(c => normalizeCountryToken(c) === key);
+  if (exists) return;
+
+  excludedCountries = [...(excludedCountries || []), value].sort((a, b) => a.localeCompare(b));
+  await saveExcludedCountries();
+  renderExcludedCountryChips();
+  currentPage = 1;
+  await loadResults();
+}
+
+async function removeExcludedCountry(rawValue) {
+  const key = normalizeCountryToken(rawValue);
+  excludedCountries = (excludedCountries || []).filter(c => normalizeCountryToken(c) !== key);
+  await saveExcludedCountries();
+  renderExcludedCountryChips();
+  currentPage = 1;
+  await loadResults();
+}
+
+function parseCountryListFromInput(inputValue) {
+  return String(inputValue || '')
+    .split(/[,\n;]+/g)
+    .map(s => s.trim())
+    .filter(Boolean);
+}
+
+function deriveCountrySuggestionsFromJobs(jobs) {
+  const suggestions = new Set(DEFAULT_COUNTRY_SUGGESTIONS);
+  const all = Array.isArray(jobs) ? jobs : [];
+
+  // Quick heuristics: look for country names at end of location like "City, Country"
+  for (const job of all) {
+    const loc = String(job?.location || '').trim();
+    if (!loc) continue;
+    const parts = loc.split(',').map(p => p.trim()).filter(Boolean);
+    const last = parts.length >= 2 ? parts[parts.length - 1] : '';
+    if (last && last.length <= 40) suggestions.add(last);
+  }
+
+  return Array.from(suggestions).sort((a, b) => a.localeCompare(b));
+}
+
+function setSuggestionsVisible(visible) {
+  const el = document.getElementById('excludedCountrySuggestions');
+  if (!el) return;
+  if (visible) el.classList.remove('hidden');
+  else el.classList.add('hidden');
+}
+
+function renderExcludedCountrySuggestions(query, allSuggestions) {
+  const suggestionsEl = document.getElementById('excludedCountrySuggestions');
+  if (!suggestionsEl) return;
+
+  const q = normalizeCountryToken(query);
+  const selectedKeys = new Set((excludedCountries || []).map(normalizeCountryToken));
+
+  if (!q) {
+    suggestionsEl.innerHTML = '';
+    setSuggestionsVisible(false);
+    return;
+  }
+
+  const matches = (allSuggestions || [])
+    .filter(s => {
+      const key = normalizeCountryToken(s);
+      if (!key || selectedKeys.has(key)) return false;
+      return key.includes(q);
+    })
+    .slice(0, 10);
+
+  if (matches.length === 0) {
+    suggestionsEl.innerHTML = '';
+    setSuggestionsVisible(false);
+    return;
+  }
+
+  suggestionsEl.innerHTML = '';
+  matches.forEach(s => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'tag-suggestion';
+    btn.setAttribute('role', 'option');
+    btn.textContent = s;
+    btn.addEventListener('click', async () => {
+      const input = document.getElementById('excludedCountryInput');
+      if (input) input.value = '';
+      setSuggestionsVisible(false);
+      await addExcludedCountry(s);
+    });
+    suggestionsEl.appendChild(btn);
+  });
+
+  setSuggestionsVisible(true);
+}
+
+async function initializeExcludedCountriesFilter() {
+  const input = document.getElementById('excludedCountryInput');
+  const clearBtn = document.getElementById('clearExcludedCountries');
+  const tagInput = document.getElementById('excludedCountriesTagInput');
+  const suggestionsEl = document.getElementById('excludedCountrySuggestions');
+
+  if (!input || !clearBtn || !tagInput || !suggestionsEl) {
+    return;
+  }
+
+  const { excludedCountries: saved } = await chrome.storage.local.get(['excludedCountries']);
+  excludedCountries = Array.isArray(saved) ? saved : [];
+  renderExcludedCountryChips();
+
+  let cachedSuggestions = deriveCountrySuggestionsFromJobs([]);
+
+  // Update suggestions whenever results are reloaded (we rebuild from jobs then)
+  const rebuildSuggestionsFromStorageJobs = async () => {
+    const { jobs = [] } = await chrome.storage.local.get(['jobs']);
+    cachedSuggestions = deriveCountrySuggestionsFromJobs(jobs);
+  };
+  await rebuildSuggestionsFromStorageJobs();
+
+  const onInputChange = async () => {
+    // Rebuild suggestions lazily (jobs change over time)
+    await rebuildSuggestionsFromStorageJobs();
+    renderExcludedCountrySuggestions(input.value, cachedSuggestions);
+  };
+
+  input.addEventListener('input', () => {
+    onInputChange();
+  });
+
+  input.addEventListener('keydown', async (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const values = parseCountryListFromInput(input.value);
+      if (values.length === 0) return;
+      input.value = '';
+      setSuggestionsVisible(false);
+      for (const v of values) {
+        // Prefer an exact suggestion match (case-insensitive) if present
+        const exact = cachedSuggestions.find(s => normalizeCountryToken(s) === normalizeCountryToken(v));
+        await addExcludedCountry(exact || v);
+      }
+      return;
+    }
+
+    if (e.key === 'Escape') {
+      setSuggestionsVisible(false);
+    }
+  });
+
+  tagInput.addEventListener('click', () => {
+    input.focus();
+  });
+
+  // Close suggestions when clicking outside
+  document.addEventListener('click', (e) => {
+    if (!tagInput.contains(e.target)) {
+      setSuggestionsVisible(false);
+    }
+  });
+
+  clearBtn.addEventListener('click', async () => {
+    excludedCountries = [];
+    await saveExcludedCountries();
+    renderExcludedCountryChips();
+    currentPage = 1;
+    await loadResults();
+  });
+}
 
 // Tab switching
 function initializeTabs() {
@@ -768,7 +1068,7 @@ async function loadResults() {
     await chrome.storage.local.set({ archiveLoadCounter: archiveLoadCounter + 1 });
   }
   
-  const settings = await chrome.storage.local.get(['jobs', 'lastScanTime']);
+  const settings = await chrome.storage.local.get(['jobs', 'lastScanTime', 'excludedCountries']);
   let jobs = settings.jobs || [];
   
   // Update last update time display
@@ -805,6 +1105,15 @@ async function loadResults() {
       job.company?.toLowerCase().includes(filterText) ||
       job.location?.toLowerCase().includes(filterText)
     );
+  }
+
+  // Filter by excluded countries (UI-only filter; jobs remain stored)
+  const excludedCountriesFromStorage = Array.isArray(settings.excludedCountries)
+    ? settings.excludedCountries
+    : [];
+  const matchers = buildExcludedCountryMatchers(excludedCountriesFromStorage);
+  if (matchers.length > 0) {
+    jobs = jobs.filter(job => !locationMatchesExcludedCountries(job?.location, matchers));
   }
   
   // Sort

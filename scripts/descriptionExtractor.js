@@ -432,6 +432,12 @@ export function createMetadataExtractors(doc) {
       '.jobs-details-top-card__primary-description li'
     ],
     jobDetailDate: [
+      // Newer LinkedIn unified job details header
+      '.job-details-jobs-unified-top-card__tertiary-description-container',
+      '.job-details-jobs-unified-top-card__tertiary-description-container .tvm__text--low-emphasis',
+      '.job-details-jobs-unified-top-card__tertiary-description-container [class*="tvm__text"]',
+      '[class*="unified-top-card"] [class*="tertiary-description"]',
+      '[class*="unified-top-card"] .tvm__text--low-emphasis',
       '.jobs-details-top-card__job-insight',
       '.jobs-details-top-card__job-insight-text-item',
       'span[data-testid="job-posted-date"]',
@@ -496,6 +502,16 @@ export function createMetadataExtractors(doc) {
   };
   
   const getDate = () => {
+    const extractRelativeDate = (raw) => {
+      if (!raw) return null;
+      const text = String(raw)
+        .replace(/[\u200B-\u200D\uFEFF]/g, '')
+        .replace(/^[\s·•|–—\-:,]+/g, '')
+        .trim();
+      const match = text.match(/(\d+\s*(?:second|minute|hour|day|week|month)s?\s*ago|today|yesterday|just\s*now)/i);
+      return match ? match[1].trim() : null;
+    };
+
     for (const selector of SELECTORS.jobDetailDate) {
       const el = doc.querySelector(selector);
       if (el) {
@@ -515,9 +531,12 @@ export function createMetadataExtractors(doc) {
             if (text) return text;
           }
         } else if (text) {
+          const relative = extractRelativeDate(text);
+          if (relative) return relative;
           const dateMatch = text.match(/(?:reposted|posted)\s+(.+)/i);
           if (dateMatch && dateMatch[1]) {
-            return dateMatch[1].trim();
+            const cleaned = extractRelativeDate(dateMatch[1]) || dateMatch[1].trim();
+            return cleaned;
           }
           return text;
         }
@@ -541,9 +560,12 @@ export function createMetadataExtractors(doc) {
         } catch (e) {
           const text = el.textContent?.trim();
           if (text) {
+            const relative = extractRelativeDate(text);
+            if (relative) return relative;
             const dateMatch = text.match(/(?:reposted|posted)\s+(.+)/i);
             if (dateMatch && dateMatch[1]) {
-              return dateMatch[1].trim();
+              const cleaned = extractRelativeDate(dateMatch[1]) || dateMatch[1].trim();
+              return cleaned;
             }
             return text;
           }

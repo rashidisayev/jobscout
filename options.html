@@ -120,6 +120,26 @@
           <button id="pauseScanning" class="btn btn-secondary">Pause</button>
           <button id="clearAllJobs" class="btn btn-danger">Clear All Jobs</button>
         </div>
+
+        <div class="results-advanced-filters">
+          <div class="excluded-countries-filter">
+            <div class="excluded-countries-label">Excluded countries</div>
+            <div class="tag-input" id="excludedCountriesTagInput" aria-label="Excluded countries">
+              <div class="tag-chips" id="excludedCountriesChips"></div>
+              <input
+                type="text"
+                id="excludedCountryInput"
+                placeholder="Type a country and press Enter…"
+                autocomplete="off"
+              />
+              <div id="excludedCountrySuggestions" class="tag-suggestions hidden" role="listbox" aria-label="Country suggestions"></div>
+            </div>
+            <button id="clearExcludedCountries" class="btn btn-secondary">Clear</button>
+          </div>
+          <div class="help-text" style="margin: 8px 0 0;">
+            Jobs whose location contains any excluded country will be hidden from this list.
+          </div>
+        </div>
         
         <div id="resultsSummary" class="results-summary"></div>
         <div id="resultsTable" class="results-table"></div>
