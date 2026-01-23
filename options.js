@@ -1058,6 +1058,16 @@ async function saveSettings() {
   alert('Settings saved!');
 }
 
+// Mark extension as updated (after user runs git pull and reloads)
+async function markAsUpdated(latestCommitSha, currentVersion) {
+  await chrome.storage.local.set({
+    currentCommitHash: latestCommitSha,
+    extensionVersion: currentVersion || chrome.runtime.getManifest().version,
+    lastUpdateCheck: Date.now()
+  });
+  showToast('✓ Marked as updated!', 'success');
+}
+
 // Extension update check
 async function checkForUpdates() {
   const statusEl = document.getElementById('updateStatus');
@@ -1131,6 +1141,10 @@ async function checkForUpdates() {
       statusEl.textContent = '⚠ Update available';
       statusEl.style.color = '#f59e0b';
       instructionsEl.style.display = 'block';
+      
+      // Create a unique ID for the mark as updated button
+      const markUpdatedBtnId = 'markAsUpdatedBtn';
+      
       instructionsEl.innerHTML = `
         <strong style="color: #f59e0b;">New version available!</strong><br><br>
         <strong>Your version:</strong> ${currentCommitHash.substring(0, 7)}<br>
@@ -1148,11 +1162,26 @@ async function checkForUpdates() {
           <li>Go to <code>chrome://extensions/</code> and click the <strong>reload</strong> button (🔄) on JobScout</li>
         </ol>
         <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(209, 213, 219, 0.9);">
-          <a href="https://github.com/rashidisayev/jobscout" target="_blank" style="color: #4f46e5; text-decoration: none; font-weight: 500;">
-            📦 View repository on GitHub →
-          </a>
+          <button id="${markUpdatedBtnId}" class="btn btn-primary" style="margin-bottom: 8px;">
+            ✓ I've Updated - Mark as Current
+          </button>
+          <div style="margin-top: 8px;">
+            <a href="https://github.com/rashidisayev/jobscout" target="_blank" style="color: #4f46e5; text-decoration: none; font-weight: 500;">
+              📦 View repository on GitHub →
+            </a>
+          </div>
         </div>
       `;
+      
+      // Add event listener for the mark as updated button
+      const markUpdatedBtn = document.getElementById(markUpdatedBtnId);
+      if (markUpdatedBtn) {
+        markUpdatedBtn.addEventListener('click', async () => {
+          await markAsUpdated(latestCommitSha, currentVersion);
+          // Re-check to update the display
+          await checkForUpdates();
+        });
+      }
     }
     
     // Update last check time
