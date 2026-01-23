@@ -965,6 +965,30 @@ footer {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  transition: all 0.2s ease-out;
+}
+
+.job-card-applied {
+  background: #f3f4f6;
+  border-color: rgba(156, 163, 175, 0.6);
+  opacity: 0.75;
+}
+
+.job-card-applied .job-card-title {
+  color: #6b7280;
+  text-decoration: line-through;
+}
+
+.job-card-applied .job-card-company {
+  color: #9ca3af;
+}
+
+.job-card-applied .job-card-meta {
+  color: #9ca3af;
+}
+
+.job-card-applied .score-badge {
+  opacity: 0.6;
 }
 
 .job-card-header {
@@ -1156,6 +1180,15 @@ footer {
 .dropdown-item-danger:hover:not(:disabled) {
   background: #fef2f2;
   color: #b91c1c;
+}
+
+.dropdown-item-applied {
+  color: #059669;
+}
+
+.dropdown-item-applied:hover:not(:disabled) {
+  background: #ecfdf5;
+  color: #047857;
 }
 
 /* Results toolbar button sizing consistency */

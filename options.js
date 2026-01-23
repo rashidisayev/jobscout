@@ -114,6 +114,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         loadResults();
       }
       
+      // Update results if applied jobs changed (to update gray styling)
+      if (changes.appliedJobs) {
+        loadResults();
+      }
+      
       // Update pause button if pause state changed
       if (changes.isPaused) {
         updatePauseButton(changes.isPaused.newValue);
@@ -1334,13 +1339,62 @@ function updateLastUpdateTime(lastScanTime) {
 }
 
 /**
+ * Toggle applied status for a job
+ * @param {Object} job - The job object
+ * @param {HTMLElement} cardElement - The job card element
+ * @param {boolean} isApplied - Whether to mark as applied (true) or not applied (false)
+ */
+async function toggleAppliedStatus(job, cardElement, isApplied) {
+  try {
+    const { getJobKey } = await import('./scripts/storage.js');
+    const jobKey = getJobKey(job);
+    
+    const { appliedJobs = [] } = await chrome.storage.local.get(['appliedJobs']);
+    let updatedAppliedJobs;
+    
+    if (isApplied) {
+      // Add to applied list if not already there
+      if (!appliedJobs.includes(jobKey)) {
+        updatedAppliedJobs = [...appliedJobs, jobKey];
+      } else {
+        return; // Already applied
+      }
+    } else {
+      // Remove from applied list
+      updatedAppliedJobs = appliedJobs.filter(id => id !== jobKey);
+    }
+    
+    await chrome.storage.local.set({ appliedJobs: updatedAppliedJobs });
+    
+    // Update card styling
+    if (cardElement) {
+      if (isApplied) {
+        cardElement.classList.add('job-card-applied');
+      } else {
+        cardElement.classList.remove('job-card-applied');
+      }
+    }
+    
+    showToast(isApplied ? '✓ Marked as applied' : '↩️ Marked as not applied', 'success');
+    
+    // Reload results to update all cards
+    await loadResults();
+    
+  } catch (error) {
+    console.error('Error toggling applied status:', error);
+    showToast('Failed to update applied status: ' + (error?.message || 'Unknown error'), 'error');
+  }
+}
+
+/**
  * Create a split-button dropdown for job actions
  * @param {Object} job - The job object
  * @param {Object} bestMatch - Best match data (optional)
  * @param {HTMLElement} cardElement - The job card element
+ * @param {boolean} isApplied - Whether the job is marked as applied
  * @returns {HTMLElement}
  */
-function createSplitButtonDropdown(job, bestMatch, cardElement) {
+function createSplitButtonDropdown(job, bestMatch, cardElement, isApplied = false) {
   const container = document.createElement('div');
   container.className = 'split-button-container';
   
@@ -1396,6 +1450,17 @@ function createSplitButtonDropdown(job, bestMatch, cardElement) {
       }
     });
   }
+  
+  // Mark as Applied action
+  dropdownItems.push({
+    label: isApplied ? 'Mark as Not Applied' : 'Mark as Applied',
+    icon: isApplied ? '↩️' : '✓',
+    action: async () => {
+      closeDropdown();
+      await toggleAppliedStatus(job, cardElement, !isApplied);
+    },
+    className: isApplied ? 'dropdown-item-applied' : ''
+  });
   
   // Save action
   dropdownItems.push({
@@ -1528,13 +1593,19 @@ async function handleNotValidAction(job, cardElement) {
   }
 }
 
-function displayResults(jobs) {
-  const tableDiv = document.getElementById('resultsTable');
-  
-  if (jobs.length === 0) {
-    tableDiv.innerHTML = '<div class="empty-state"><p>No jobs found. Run a scan to collect jobs.</p></div>';
-    return;
-  }
+async function displayResults(jobs) {
+  try {
+    const tableDiv = document.getElementById('resultsTable');
+    
+    if (jobs.length === 0) {
+      tableDiv.innerHTML = '<div class="empty-state"><p>No jobs found. Run a scan to collect jobs.</p></div>';
+      return;
+    }
+    
+    // Load applied jobs to check status
+    const { getJobKey } = await import('./scripts/storage.js');
+    const { appliedJobs = [] } = await chrome.storage.local.get(['appliedJobs']);
+    const appliedJobsSet = new Set(appliedJobs);
   
   // Wrapper that contains score help + cards list (Hiring.cafe-style)
   const wrapper = document.createElement('div');
@@ -1553,9 +1624,15 @@ function displayResults(jobs) {
   const cardsContainer = document.createElement('div');
   cardsContainer.className = 'job-cards';
 
-  jobs.forEach(job => {
+  for (const job of jobs) {
     const card = document.createElement('div');
     card.className = 'job-card';
+    
+    // Apply gray styling if job is marked as applied
+    const jobKey = getJobKey(job);
+    if (appliedJobsSet.has(jobKey)) {
+      card.classList.add('job-card-applied');
+    }
 
     const title = deduplicateTitle(job.title) || 'N/A';
     const company = job.company && job.company !== 'Unknown' ? job.company : 'N/A';
@@ -1665,7 +1742,8 @@ function displayResults(jobs) {
     actions.className = 'job-actions';
 
     // Create split-button dropdown for actions
-    const splitButton = createSplitButtonDropdown(job, bestMatch, card);
+    const isApplied = appliedJobsSet.has(jobKey);
+    const splitButton = createSplitButtonDropdown(job, bestMatch, card, isApplied);
     actions.appendChild(splitButton);
     
     footer.appendChild(labelsContainer);
@@ -1676,7 +1754,7 @@ function displayResults(jobs) {
     card.appendChild(footer);
 
     cardsContainer.appendChild(card);
-  });
+  }
   
   tableDiv.innerHTML = '';
   wrapper.appendChild(scoreHeader);
@@ -1686,6 +1764,13 @@ function displayResults(jobs) {
   const helpIcon = document.getElementById('scoreHelpIcon');
   if (helpIcon) {
     helpIcon.addEventListener('click', showScoreInfoModal);
+  }
+  } catch (error) {
+    console.error('Error displaying results:', error);
+    const tableDiv = document.getElementById('resultsTable');
+    if (tableDiv) {
+      tableDiv.innerHTML = '<div class="empty-state"><p>Error loading jobs. Please refresh the page.</p></div>';
+    }
   }
 }
 
