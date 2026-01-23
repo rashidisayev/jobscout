@@ -12,7 +12,8 @@
   ],
   "host_permissions": [
     "https://www.linkedin.com/*",
-    "https://api.github.com/*"
+    "https://api.github.com/*",
+    "http://localhost:11434/*"
   ],
   "background": {
     "service_worker": "background.js"

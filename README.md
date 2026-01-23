@@ -85,6 +85,36 @@ You can create these using any image editor, or use online tools like [Favicon G
 
 - **Export Data**: Click "Export CSV" in the Results tab to download all jobs as a CSV file
 
+### Analytics (Ollama)
+
+JobScout can generate analytics on your job list using a local Ollama server.
+
+**Install Ollama**:
+1. Download Ollama from https://ollama.com and install it
+2. Verify the install:
+   ```bash
+   ollama --version
+   ```
+
+**Start Ollama**:
+1. Pull a model (example):
+   ```bash
+   ollama pull llama3.1
+   ```
+2. Start the server and allow this extension origin:
+   ```bash
+   OLLAMA_ORIGINS=chrome-extension://<your-extension-id> ollama serve
+   ```
+   If you prefer a quick local setup:
+   ```bash
+   OLLAMA_ORIGINS=* ollama serve
+   ```
+
+**Use Analytics**:
+1. Open JobScout Options → **Analytics** tab
+2. Click **Run Analytics**
+3. If you see a 403 error, confirm Ollama is running with the correct `OLLAMA_ORIGINS` value and then reload the extension
+
 ### Google Sheets Integration (Application Tracking)
 
 JobScout can automatically save jobs to your own Google Sheet for tracking applications:

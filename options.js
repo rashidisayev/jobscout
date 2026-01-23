@@ -1,6 +1,6 @@
 // Options page script for JobScout
 
-import { getJobById, archiveOldJobs, excludeJob, isJobExcluded } from './scripts/storage.js';
+import { getJobById, archiveOldJobs, excludeJob, isJobExcluded, getJobKey } from './scripts/storage.js';
 import { sanitizeHtml } from './scripts/utils.js';
 import { 
   MAX_SEARCH_URLS, 
@@ -21,6 +21,19 @@ let currentPage = 1;
 
 // Results filter: excluded countries (persisted in chrome.storage.local)
 let excludedCountries = [];
+let analyticsLoaded = false;
+const OLLAMA_BASE_URL = 'http://localhost:11434';
+const OLLAMA_TIMEOUT_MS = 2500;
+let lastAnalyticsJobList = [];
+
+function buildOllamaUrl(pathname) {
+  try {
+    const base = new URL(OLLAMA_BASE_URL).origin;
+    return new URL(pathname, base).toString();
+  } catch (error) {
+    return `http://localhost:11434${pathname}`;
+  }
+}
 const DEFAULT_COUNTRY_SUGGESTIONS = [
   'United States', 'USA', 'Canada', 'United Kingdom', 'UK', 'Ireland',
   'Germany', 'France', 'Spain', 'Italy', 'Netherlands', 'Belgium', 'Switzerland', 'Austria',
@@ -77,6 +90,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('testGoogleSheetUrl').addEventListener('click', testGoogleSheetConnection);
   document.getElementById('showAppsScriptHelp').addEventListener('click', showAppsScriptHelp);
   document.getElementById('checkForUpdates').addEventListener('click', checkForUpdates);
+  const runAnalyticsBtn = document.getElementById('runAnalytics');
+  if (runAnalyticsBtn) {
+    runAnalyticsBtn.addEventListener('click', () => loadAnalytics(true));
+  }
   document.getElementById('sortBy').addEventListener('change', () => {
     currentPage = 1;
     loadResults();
@@ -102,6 +119,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       
       // Update results if jobs changed
       if (changes.jobs) {
+        analyticsLoaded = false;
         loadResults();
       }
 
@@ -116,6 +134,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       
       // Update results if applied jobs changed (to update gray styling)
       if (changes.appliedJobs) {
+        analyticsLoaded = false;
         loadResults();
       }
       
@@ -435,8 +454,396 @@ function initializeTabs() {
           content.classList.add('active');
         }
       });
+
+      if (targetTab === 'analytics') {
+        loadAnalytics(false);
+      }
     });
   });
+}
+
+function inferRemoteType(job) {
+  const text = `${job.remote_type || ''} ${job.location || ''} ${job.title || ''}`.toLowerCase();
+  if (text.includes('remote')) return 'Remote';
+  if (text.includes('hybrid')) return 'Hybrid';
+  if (text.includes('on-site') || text.includes('onsite')) return 'On-site';
+  return 'Unknown';
+}
+
+function inferSeniority(job) {
+  const text = `${job.seniority || ''} ${job.title || ''}`.toLowerCase();
+  if (/(chief|cto|cpo|ceo|coo|cso|vp|vice president|head)\b/.test(text)) return 'VP+';
+  if (/\bsenior director\b/.test(text)) return 'Senior Director';
+  if (/\bdirector\b/.test(text)) return 'Director';
+  if (/\bsenior manager\b/.test(text)) return 'Senior Manager';
+  if (/\bmanager\b/.test(text)) return 'Manager';
+  if (/\blead\b/.test(text)) return 'Lead';
+  if (/\b(senior|sr\.|staff|principal)\b/.test(text)) return 'Senior';
+  if (/\b(junior|jr\.|intern)\b/.test(text)) return 'IC';
+  return 'Unknown';
+}
+
+function normalizeStatus(status) {
+  if (!status) return 'Unknown';
+  const text = String(status).toLowerCase();
+  if (text.includes('applied')) return 'Applied';
+  if (text.includes('interview')) return 'Interview';
+  if (text.includes('reject')) return 'Rejected';
+  if (text.includes('offer')) return 'Offer';
+  if (text.includes('save')) return 'Saved';
+  return 'Unknown';
+}
+
+function buildAnalyticsJobList(jobs, appliedJobsSet) {
+  return jobs.map(job => {
+    const status = appliedJobsSet.has(getJobKey(job))
+      ? 'Applied'
+      : normalizeStatus(job.status || 'Saved');
+
+    return {
+      id: getJobKey(job),
+      title: job.title || '',
+      company: job.company || '',
+      location: job.location || '',
+      country: job.country || '',
+      remote_type: inferRemoteType(job),
+      employment_type: job.employment_type || job.employmentType || '',
+      seniority: inferSeniority(job),
+      department: job.department || '',
+      keywords: Array.isArray(job.keywords) ? job.keywords : [],
+      description: job.description || '',
+      source: job.source || '',
+      date_posted: job.datePosted || job.date_posted || '',
+      date_saved: job.dateSaved || job.date_saved || '',
+      status,
+      salary_min: job.salary_min,
+      salary_max: job.salary_max,
+      salary_currency: job.salary_currency,
+      url: job.url || job.link || ''
+    };
+  });
+}
+
+function getTopCounts(items, key, limit = 5) {
+  const counts = new Map();
+  items.forEach(item => {
+    const value = (item[key] || '').trim();
+    if (!value) return;
+    counts.set(value, (counts.get(value) || 0) + 1);
+  });
+  return Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(([value, count]) => ({ value, count }));
+}
+
+function buildLocalHighlights(jobList) {
+  const topTitles = getTopCounts(jobList, 'title', 3);
+  const topLocations = getTopCounts(jobList, 'location', 3);
+  const highlights = [];
+
+  if (topTitles.length > 0) {
+    const top = topTitles[0];
+    highlights.push({
+      title: 'Most common title',
+      detail: `${top.value} (${top.count} roles)`,
+      priority: 'high'
+    });
+  }
+
+  if (topLocations.length > 0) {
+    const top = topLocations[0];
+    highlights.push({
+      title: 'Most common location',
+      detail: `${top.value} (${top.count} roles)`,
+      priority: 'high'
+    });
+  }
+
+  return highlights;
+}
+
+function mergeRequiredHighlights(highlights, jobList) {
+  if (!Array.isArray(jobList) || jobList.length === 0) return highlights;
+  const required = buildLocalHighlights(jobList);
+  const titles = new Set((highlights || []).map(item => (item.title || '').toLowerCase()));
+  const merged = Array.isArray(highlights) ? [...highlights] : [];
+
+  required.forEach(item => {
+    if (!titles.has(item.title.toLowerCase())) {
+      merged.unshift(item);
+    }
+  });
+
+  return merged;
+}
+
+async function checkOllamaAvailability() {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), OLLAMA_TIMEOUT_MS);
+  try {
+    const response = await fetch(buildOllamaUrl('/api/tags'), { signal: controller.signal });
+    if (response.status === 403) {
+      throw new Error('Ollama rejected this request (403). Allow this extension origin in Ollama (set OLLAMA_ORIGINS=* or include your chrome-extension:// ID) and restart Ollama.');
+    }
+    if (!response.ok) {
+      return null;
+    }
+    const data = await response.json();
+    return Array.isArray(data.models) ? data.models : [];
+  } catch (error) {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function getOllamaFallbackJson() {
+  return {
+    error: {
+      code: 'OLLAMA_NOT_AVAILABLE',
+      message: 'Ollama is not reachable at http://localhost:11434. Please start Ollama first (open the Ollama app or run: ollama serve), then refresh Analytics.'
+    }
+  };
+}
+
+async function requestAnalyticsFromOllama(jobList, modelName) {
+  const prompt = `
+You are an analytics engine. Analyze the following JSON array of job items and return ONLY valid JSON.
+
+Rules:
+1) If fields are missing, infer cautiously from title/location/description/keywords (e.g., remote_type, seniority), but never invent salary or dates.
+2) Normalize:
+   - remote_type into: Remote / Hybrid / On-site / Unknown
+   - seniority into: IC / Lead / Manager / Senior Manager / Director / Senior Director / VP+ / Unknown (best effort)
+   - status into: Saved / Applied / Interview / Rejected / Offer / Unknown (best effort)
+3) Provide insights that help the user decide where to focus:
+   - Top companies hiring
+   - Most common titles/keywords
+   - Remote/hybrid distribution
+   - Location hotspots
+   - Posting recency (if date_posted exists)
+   - Pipeline health (if status exists)
+   - Any anomalies (duplicates, missing info, suspicious postings)
+4) Output MUST be valid JSON and MUST follow the schema below exactly.
+5) Do not include markdown, explanations, or extra text. JSON only.
+
+Schema:
+{
+  "summary": {
+    "total_roles": number,
+    "unique_companies": number,
+    "remote_distribution": { "Remote": number, "Hybrid": number, "On-site": number, "Unknown": number },
+    "top_locations": [ { "location": string, "count": number } ],
+    "top_companies": [ { "company": string, "count": number } ],
+    "top_titles": [ { "title": string, "count": number } ],
+    "top_keywords": [ { "keyword": string, "count": number } ],
+    "recency": {
+      "has_date_posted": boolean,
+      "posted_last_7_days": number,
+      "posted_last_30_days": number,
+      "older_than_30_days": number
+    },
+    "pipeline": {
+      "has_status": boolean,
+      "Saved": number,
+      "Applied": number,
+      "Interview": number,
+      "Rejected": number,
+      "Offer": number,
+      "Unknown": number
+    }
+  },
+  "highlights": [
+    { "title": string, "detail": string, "priority": "high" | "medium" | "low" }
+  ],
+  "charts": [
+    {
+      "id": string,
+      "title": string,
+      "type": "bar" | "line" | "pie" | "stacked_bar" | "heatmap",
+      "x": string,
+      "y": string,
+      "series": string | null,
+      "data": [ { "x": string, "y": number, "series": string | null } ],
+      "notes": string
+    }
+  ],
+  "quality": {
+    "duplicates_found": number,
+    "missing_critical_fields": [ string ],
+    "data_warnings": [ string ]
+  },
+  "recommended_actions": [
+    { "action": string, "reason": string, "impact": "high" | "medium" | "low" }
+  ]
+}
+
+Job list JSON:
+${JSON.stringify(jobList)}
+  `.trim();
+
+  const response = await fetch(buildOllamaUrl('/api/generate'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: modelName,
+      prompt,
+      stream: false,
+      format: 'json'
+    })
+  });
+
+  if (response.status === 403) {
+    throw new Error('Ollama rejected this request (403). Allow this extension origin in Ollama (set OLLAMA_ORIGINS=* or include your chrome-extension:// ID) and restart Ollama.');
+  }
+  if (!response.ok) {
+    throw new Error(`Ollama error: ${response.status} ${response.statusText}`);
+  }
+
+  const data = await response.json();
+  return JSON.parse(data.response || '{}');
+}
+
+function renderAnalytics(analytics) {
+  const highlightsEl = document.getElementById('analyticsHighlights');
+  const chartsEl = document.getElementById('analyticsCharts');
+  const rawEl = document.getElementById('analyticsRawJson');
+
+  if (rawEl) {
+    rawEl.textContent = JSON.stringify(analytics, null, 2);
+  }
+
+  if (!highlightsEl || !chartsEl) return;
+
+  if (analytics?.error?.code === 'OLLAMA_NOT_AVAILABLE') {
+    highlightsEl.innerHTML = '';
+    chartsEl.innerHTML = '';
+    return;
+  }
+
+  let highlights = Array.isArray(analytics.highlights) ? analytics.highlights : [];
+  if (Array.isArray(lastAnalyticsJobList) && lastAnalyticsJobList.length > 0) {
+    highlights = mergeRequiredHighlights(highlights, lastAnalyticsJobList);
+  }
+  if (highlights.length === 0) {
+    highlightsEl.innerHTML = '<div class="analytics-empty">No highlights available.</div>';
+  } else {
+    highlightsEl.innerHTML = '';
+    highlights.forEach(item => {
+      const container = document.createElement('div');
+      container.className = 'analytics-item';
+
+      const title = document.createElement('div');
+      title.className = 'analytics-item-title';
+      title.textContent = item.title || 'Highlight';
+
+      const badge = document.createElement('span');
+      badge.className = 'analytics-badge';
+      badge.textContent = item.priority || 'medium';
+      title.appendChild(badge);
+
+      const detail = document.createElement('div');
+      detail.className = 'analytics-item-detail';
+      detail.textContent = item.detail || '';
+
+      container.appendChild(title);
+      container.appendChild(detail);
+      highlightsEl.appendChild(container);
+    });
+  }
+
+  const charts = Array.isArray(analytics.charts) ? analytics.charts : [];
+  if (charts.length === 0) {
+    chartsEl.innerHTML = '<div class="analytics-empty">No charts available.</div>';
+  } else {
+    chartsEl.innerHTML = '';
+    charts.forEach(chart => {
+      const container = document.createElement('div');
+      container.className = 'analytics-item';
+
+      const title = document.createElement('div');
+      title.className = 'analytics-item-title';
+      title.textContent = chart.title || 'Chart';
+
+      const meta = document.createElement('div');
+      meta.className = 'analytics-item-detail';
+      meta.textContent = `Type: ${chart.type || 'bar'} · Data points: ${(chart.data || []).length}`;
+
+      const notes = document.createElement('div');
+      notes.className = 'analytics-item-detail';
+      notes.textContent = chart.notes || '';
+
+      container.appendChild(title);
+      container.appendChild(meta);
+      container.appendChild(notes);
+      chartsEl.appendChild(container);
+    });
+  }
+}
+
+function renderAnalyticsError(message) {
+  const highlightsEl = document.getElementById('analyticsHighlights');
+  const chartsEl = document.getElementById('analyticsCharts');
+  const rawEl = document.getElementById('analyticsRawJson');
+  const extensionId = chrome?.runtime?.id || 'your-extension-id';
+  let finalMessage = message || 'Analytics failed.';
+
+  if (finalMessage.includes('Ollama rejected')) {
+    finalMessage += ` Allow this extension in Ollama: OLLAMA_ORIGINS=chrome-extension://${extensionId} (or set OLLAMA_ORIGINS=*), then restart Ollama.`;
+  }
+
+  if (highlightsEl) {
+    highlightsEl.innerHTML = `<div class="analytics-empty">${finalMessage}</div>`;
+  }
+  if (chartsEl) {
+    chartsEl.innerHTML = '<div class="analytics-empty">Charts unavailable.</div>';
+  }
+  if (rawEl) {
+    rawEl.textContent = JSON.stringify({ error: { message: finalMessage } }, null, 2);
+  }
+}
+
+async function loadAnalytics(forceRefresh) {
+  if (analyticsLoaded && !forceRefresh) return;
+  const statusEl = document.getElementById('analyticsStatus');
+  const rawEl = document.getElementById('analyticsRawJson');
+  if (statusEl) statusEl.textContent = 'Analyzing...';
+
+  try {
+    const { jobs = [], appliedJobs = [] } = await chrome.storage.local.get(['jobs', 'appliedJobs']);
+    const appliedJobsSet = new Set(appliedJobs);
+    const jobList = buildAnalyticsJobList(jobs, appliedJobsSet);
+    lastAnalyticsJobList = jobList;
+    if (jobList.length === 0) {
+      if (statusEl) statusEl.textContent = 'No jobs to analyze';
+      renderAnalyticsError('No jobs found in Results.');
+      return;
+    }
+
+    const models = await checkOllamaAvailability();
+    if (!models) {
+      const fallback = getOllamaFallbackJson();
+      renderAnalytics(fallback);
+      if (statusEl) statusEl.textContent = '';
+      analyticsLoaded = true;
+      return;
+    }
+
+    if (models.length === 0) {
+      throw new Error('No Ollama models found. Pull a model first.');
+    }
+
+    const modelName = models[0].name;
+    const analytics = await requestAnalyticsFromOllama(jobList, modelName);
+    renderAnalytics(analytics);
+    analyticsLoaded = true;
+    if (statusEl) statusEl.textContent = 'Updated';
+  } catch (error) {
+    console.error('Analytics error:', error);
+    if (statusEl) statusEl.textContent = 'Failed';
+    renderAnalyticsError(error?.message || 'Analytics failed.');
+  }
 }
 
 // Helper function to normalize search URL format (support both old string and new object format)

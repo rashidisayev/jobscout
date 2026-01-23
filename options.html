@@ -18,6 +18,7 @@
       <button class="tab-btn" data-tab="resumes">Resumes</button>
       <button class="tab-btn" data-tab="settings">Settings</button>
       <button class="tab-btn" data-tab="results">Results</button>
+      <button class="tab-btn" data-tab="analytics">Analytics</button>
     </div>
     
     <!-- Search URLs Tab -->
@@ -157,6 +158,43 @@
         <div id="resultsSummary" class="results-summary"></div>
         <div id="resultsTable" class="results-table"></div>
         <div id="paginationControls" class="pagination-controls hidden"></div>
+      </section>
+    </div>
+
+    <!-- Analytics Tab -->
+    <div class="tab-content" id="analytics-tab">
+      <section class="section">
+        <div class="analytics-header">
+          <div>
+            <h2 style="margin: 0;">Analytics</h2>
+            <p class="help-text">AI-generated insights and chart specs from your job list.</p>
+          </div>
+          <div class="analytics-actions">
+            <button id="runAnalytics" class="btn btn-primary">Run Analytics</button>
+            <span id="analyticsStatus" class="analytics-status"></span>
+          </div>
+        </div>
+
+        <div class="analytics-grid">
+          <div class="analytics-card">
+            <h3>Executive Highlights</h3>
+            <div id="analyticsHighlights" class="analytics-list">
+              <div class="analytics-empty">Run analytics to see key insights.</div>
+            </div>
+          </div>
+
+          <div class="analytics-card">
+            <h3>Charts</h3>
+            <div id="analyticsCharts" class="analytics-list">
+              <div class="analytics-empty">Charts will appear here after analysis.</div>
+            </div>
+          </div>
+        </div>
+
+        <details class="analytics-raw">
+          <summary>Raw analytics JSON</summary>
+          <pre id="analyticsRawJson">{}</pre>
+        </details>
       </section>
     </div>
     
