@@ -1293,6 +1293,10 @@ footer {
   overflow-x: auto;
 }
 
+#ollamaServerStatus {
+  color: #6b7280;
+}
+
 /* Results toolbar button sizing consistency */
 .results-controls .btn-danger {
   padding: 9px 18px;

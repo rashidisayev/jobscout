@@ -22,13 +22,14 @@ let currentPage = 1;
 // Results filter: excluded countries (persisted in chrome.storage.local)
 let excludedCountries = [];
 let analyticsLoaded = false;
-const OLLAMA_BASE_URL = 'http://localhost:11434';
+const DEFAULT_OLLAMA_URL = 'http://localhost:11434';
 const OLLAMA_TIMEOUT_MS = 2500;
 let lastAnalyticsJobList = [];
+let ollamaBaseUrl = DEFAULT_OLLAMA_URL;
 
 function buildOllamaUrl(pathname) {
   try {
-    const base = new URL(OLLAMA_BASE_URL).origin;
+    const base = new URL(ollamaBaseUrl).origin;
     return new URL(pathname, base).toString();
   } catch (error) {
     return `http://localhost:11434${pathname}`;
@@ -58,6 +59,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadResumes();
   await loadGoogleSheetUrl();
   await loadGoogleSheetStatsUrl();
+  await loadOllamaSettings();
   await loadSettings();
   await initializeExcludedCountriesFilter();
   await loadResults();
@@ -90,6 +92,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('testGoogleSheetUrl').addEventListener('click', testGoogleSheetConnection);
   document.getElementById('showAppsScriptHelp').addEventListener('click', showAppsScriptHelp);
   document.getElementById('checkForUpdates').addEventListener('click', checkForUpdates);
+  document.getElementById('saveOllamaServerUrl').addEventListener('click', saveOllamaSettings);
   const runAnalyticsBtn = document.getElementById('runAnalytics');
   if (runAnalyticsBtn) {
     runAnalyticsBtn.addEventListener('click', () => loadAnalytics(true));
@@ -136,6 +139,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (changes.appliedJobs) {
         analyticsLoaded = false;
         loadResults();
+      }
+
+      if (changes.ollamaServerUrl) {
+        analyticsLoaded = false;
+        await loadOllamaSettings();
       }
       
       // Update pause button if pause state changed
@@ -856,6 +864,45 @@ function normalizeSearchUrl(item) {
     location: item.location || '',
     keyword: item.keyword || ''
   };
+}
+
+function normalizeOllamaBaseUrl(value) {
+  if (!value) return DEFAULT_OLLAMA_URL;
+  try {
+    const url = new URL(value);
+    return url.origin;
+  } catch (error) {
+    return DEFAULT_OLLAMA_URL;
+  }
+}
+
+async function loadOllamaSettings() {
+  const { ollamaServerUrl } = await chrome.storage.local.get(['ollamaServerUrl']);
+  ollamaBaseUrl = normalizeOllamaBaseUrl(ollamaServerUrl || DEFAULT_OLLAMA_URL);
+
+  const input = document.getElementById('ollamaServerUrl');
+  const status = document.getElementById('ollamaServerStatus');
+  if (input) {
+    input.value = ollamaBaseUrl;
+  }
+  if (status) {
+    status.textContent = `Using: ${ollamaBaseUrl}`;
+  }
+}
+
+async function saveOllamaSettings() {
+  const input = document.getElementById('ollamaServerUrl');
+  const status = document.getElementById('ollamaServerStatus');
+  if (!input) return;
+
+  const normalized = normalizeOllamaBaseUrl(input.value.trim());
+  await chrome.storage.local.set({ ollamaServerUrl: normalized });
+  ollamaBaseUrl = normalized;
+
+  if (status) {
+    status.textContent = `Saved: ${ollamaBaseUrl}`;
+  }
+  showToast('Ollama server updated', 'success');
 }
 
 // Debounce function for autosave
