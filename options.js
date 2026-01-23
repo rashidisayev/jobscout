@@ -76,6 +76,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('saveGoogleSheetStatsUrl').addEventListener('click', saveGoogleSheetStatsUrl);
   document.getElementById('testGoogleSheetUrl').addEventListener('click', testGoogleSheetConnection);
   document.getElementById('showAppsScriptHelp').addEventListener('click', showAppsScriptHelp);
+  document.getElementById('checkForUpdates').addEventListener('click', checkForUpdates);
   document.getElementById('sortBy').addEventListener('change', () => {
     currentPage = 1;
     loadResults();
@@ -1055,6 +1056,124 @@ async function saveSettings() {
   chrome.alarms.create('scan', { periodInMinutes: scanInterval });
   
   alert('Settings saved!');
+}
+
+// Extension update check
+async function checkForUpdates() {
+  const statusEl = document.getElementById('updateStatus');
+  const instructionsEl = document.getElementById('updateInstructions');
+  const button = document.getElementById('checkForUpdates');
+  
+  if (!statusEl || !instructionsEl || !button) return;
+  
+  // Show loading state
+  button.disabled = true;
+  button.textContent = 'Checking...';
+  statusEl.textContent = '';
+  instructionsEl.style.display = 'none';
+  instructionsEl.innerHTML = '';
+  
+  try {
+    // Get current commit hash from storage (or use manifest version as fallback)
+    const { currentCommitHash, extensionVersion } = await chrome.storage.local.get(['currentCommitHash', 'extensionVersion']);
+    const currentVersion = extensionVersion || chrome.runtime.getManifest().version;
+    
+    // Fetch latest commit from GitHub API
+    const repoUrl = 'https://api.github.com/repos/rashidisayev/jobscout/commits/main';
+    const response = await fetch(repoUrl, {
+      headers: {
+        'Accept': 'application/vnd.github.v3+json'
+      }
+    });
+    
+    if (!response.ok) {
+      throw new Error(`GitHub API error: ${response.status} ${response.statusText}`);
+    }
+    
+    const data = await response.json();
+    const latestCommitSha = data.sha;
+    const latestCommitDate = data.commit?.author?.date || '';
+    const latestCommitMessage = data.commit?.message?.split('\n')[0] || 'Update';
+    
+    // Check if we have a stored commit hash
+    if (!currentCommitHash) {
+      // First time check - store current commit
+      await chrome.storage.local.set({ 
+        currentCommitHash: latestCommitSha,
+        extensionVersion: currentVersion,
+        lastUpdateCheck: Date.now()
+      });
+      statusEl.textContent = '✓ Up to date';
+      statusEl.style.color = '#28a745';
+      instructionsEl.style.display = 'block';
+      instructionsEl.innerHTML = `
+        <strong>Current version:</strong> ${currentVersion}<br>
+        <strong>Latest commit:</strong> ${latestCommitSha.substring(0, 7)}<br>
+        <strong>Date:</strong> ${new Date(latestCommitDate).toLocaleString()}<br>
+        <strong>Message:</strong> ${latestCommitMessage}
+      `;
+      button.textContent = 'Check for Updates';
+      button.disabled = false;
+      return;
+    }
+    
+    // Compare commits
+    if (currentCommitHash === latestCommitSha) {
+      statusEl.textContent = '✓ Up to date';
+      statusEl.style.color = '#28a745';
+      instructionsEl.style.display = 'block';
+      instructionsEl.innerHTML = `
+        <strong>You're running the latest version!</strong><br>
+        <strong>Current commit:</strong> ${latestCommitSha.substring(0, 7)}<br>
+        <strong>Date:</strong> ${new Date(latestCommitDate).toLocaleString()}
+      `;
+    } else {
+      statusEl.textContent = '⚠ Update available';
+      statusEl.style.color = '#f59e0b';
+      instructionsEl.style.display = 'block';
+      instructionsEl.innerHTML = `
+        <strong style="color: #f59e0b;">New version available!</strong><br><br>
+        <strong>Your version:</strong> ${currentCommitHash.substring(0, 7)}<br>
+        <strong>Latest version:</strong> ${latestCommitSha.substring(0, 7)}<br>
+        <strong>Latest commit date:</strong> ${new Date(latestCommitDate).toLocaleString()}<br>
+        <strong>Latest commit message:</strong> ${latestCommitMessage}<br><br>
+        <strong>To update:</strong><br>
+        <ol style="margin: 8px 0 0 20px; padding-left: 20px;">
+          <li>Open Terminal and navigate to your extension folder:
+            <pre style="background: #1f2937; color: #f9fafb; padding: 8px; border-radius: 6px; margin: 6px 0; font-size: 11px; overflow-x: auto;">cd "${window.location.pathname.includes('file://') ? '/Users/rashidisayev/Desktop/jobsearch' : 'your-extension-folder'}"</pre>
+          </li>
+          <li>Run git pull:
+            <pre style="background: #1f2937; color: #f9fafb; padding: 8px; border-radius: 6px; margin: 6px 0; font-size: 11px;">git pull origin main</pre>
+          </li>
+          <li>Go to <code>chrome://extensions/</code> and click the <strong>reload</strong> button (🔄) on JobScout</li>
+        </ol>
+        <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(209, 213, 219, 0.9);">
+          <a href="https://github.com/rashidisayev/jobscout" target="_blank" style="color: #4f46e5; text-decoration: none; font-weight: 500;">
+            📦 View repository on GitHub →
+          </a>
+        </div>
+      `;
+    }
+    
+    // Update last check time
+    await chrome.storage.local.set({ lastUpdateCheck: Date.now() });
+    
+  } catch (error) {
+    console.error('Error checking for updates:', error);
+    statusEl.textContent = '✗ Check failed';
+    statusEl.style.color = '#dc3545';
+    instructionsEl.style.display = 'block';
+    instructionsEl.innerHTML = `
+      <strong style="color: #dc3545;">Failed to check for updates</strong><br>
+      <span style="color: #6b7280;">Error: ${error.message}</span><br><br>
+      <a href="https://github.com/rashidisayev/jobscout" target="_blank" style="color: #4f46e5; text-decoration: none; font-weight: 500;">
+        Visit repository manually →
+      </a>
+    `;
+  } finally {
+    button.textContent = 'Check for Updates';
+    button.disabled = false;
+  }
 }
 
 // Results display
