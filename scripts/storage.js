@@ -311,3 +311,241 @@ export async function clearExcludedJobs() {
   console.log(`Cleared ${count} excluded jobs`);
   return count;
 }
+
+// ============================================================
+// Connection Outreach Storage Helpers
+// ============================================================
+
+/**
+ * @typedef {Object} ConnectionInvite
+ * @property {string} profileUrl
+ * @property {string} profileName
+ * @property {string} title
+ * @property {string} company
+ * @property {string} outcome - 'sent' | 'skipped' | 'error'
+ * @property {string} reason - reason for skip/error
+ * @property {number} timestamp
+ */
+
+/**
+ * @typedef {Object} OutreachState
+ * @property {boolean} enabled
+ * @property {number} weeklyCount - invites sent this week
+ * @property {number} weekStartTimestamp - start of current week
+ * @property {string} status - 'idle' | 'running' | 'paused'
+ * @property {number} lastRunTimestamp
+ * @property {string[]} sentProfileUrls - URLs already sent invites to
+ */
+
+const OUTREACH_KEYS = {
+  enabled: 'outreachEnabled',
+  weeklyCount: 'outreachWeeklyCount',
+  weekStart: 'outreachWeekStart',
+  status: 'outreachStatus',
+  lastRun: 'outreachLastRun',
+  sentProfiles: 'outreachSentProfiles',
+  logs: 'outreachLogs',
+  nextScheduled: 'outreachNextScheduled'
+};
+
+const MAX_WEEKLY_INVITES = 100;
+const MAX_LOGS = 500;
+
+/**
+ * Get the start of the current week (Monday 00:00:00)
+ * @returns {number} timestamp
+ */
+function getWeekStart() {
+  const now = new Date();
+  const day = now.getDay();
+  const diff = now.getDate() - day + (day === 0 ? -6 : 1); // Adjust when Sunday
+  const monday = new Date(now.setDate(diff));
+  monday.setHours(0, 0, 0, 0);
+  return monday.getTime();
+}
+
+/**
+ * Get outreach state
+ * @returns {Promise<OutreachState>}
+ */
+export async function getOutreachState() {
+  const data = await chrome.storage.local.get([
+    OUTREACH_KEYS.enabled,
+    OUTREACH_KEYS.weeklyCount,
+    OUTREACH_KEYS.weekStart,
+    OUTREACH_KEYS.status,
+    OUTREACH_KEYS.lastRun,
+    OUTREACH_KEYS.sentProfiles,
+    OUTREACH_KEYS.nextScheduled
+  ]);
+  
+  const currentWeekStart = getWeekStart();
+  const storedWeekStart = data[OUTREACH_KEYS.weekStart] || 0;
+  
+  // Reset weekly count if new week
+  let weeklyCount = data[OUTREACH_KEYS.weeklyCount] || 0;
+  if (storedWeekStart < currentWeekStart) {
+    weeklyCount = 0;
+    await chrome.storage.local.set({
+      [OUTREACH_KEYS.weeklyCount]: 0,
+      [OUTREACH_KEYS.weekStart]: currentWeekStart
+    });
+  }
+  
+  return {
+    enabled: data[OUTREACH_KEYS.enabled] || false,
+    weeklyCount,
+    weekStartTimestamp: currentWeekStart,
+    status: data[OUTREACH_KEYS.status] || 'idle',
+    lastRunTimestamp: data[OUTREACH_KEYS.lastRun] || 0,
+    sentProfileUrls: data[OUTREACH_KEYS.sentProfiles] || [],
+    nextScheduled: data[OUTREACH_KEYS.nextScheduled] || 0
+  };
+}
+
+/**
+ * Update outreach state
+ * @param {Partial<OutreachState>} updates
+ */
+export async function updateOutreachState(updates) {
+  const toSet = {};
+  if (updates.enabled !== undefined) toSet[OUTREACH_KEYS.enabled] = updates.enabled;
+  if (updates.weeklyCount !== undefined) toSet[OUTREACH_KEYS.weeklyCount] = updates.weeklyCount;
+  if (updates.status !== undefined) toSet[OUTREACH_KEYS.status] = updates.status;
+  if (updates.lastRunTimestamp !== undefined) toSet[OUTREACH_KEYS.lastRun] = updates.lastRunTimestamp;
+  if (updates.sentProfileUrls !== undefined) toSet[OUTREACH_KEYS.sentProfiles] = updates.sentProfileUrls;
+  if (updates.nextScheduled !== undefined) toSet[OUTREACH_KEYS.nextScheduled] = updates.nextScheduled;
+  
+  await chrome.storage.local.set(toSet);
+}
+
+/**
+ * Check if profile URL was already sent an invite
+ * @param {string} profileUrl
+ * @returns {Promise<boolean>}
+ */
+export async function isProfileAlreadySent(profileUrl) {
+  const state = await getOutreachState();
+  const normalizedUrl = normalizeProfileUrl(profileUrl);
+  return state.sentProfileUrls.some(url => normalizeProfileUrl(url) === normalizedUrl);
+}
+
+/**
+ * Normalize LinkedIn profile URL
+ * @param {string} url
+ * @returns {string}
+ */
+function normalizeProfileUrl(url) {
+  if (!url) return '';
+  try {
+    const parsed = new URL(url);
+    // Remove trailing slash and query params
+    return `${parsed.origin}${parsed.pathname}`.replace(/\/$/, '').toLowerCase();
+  } catch {
+    return url.toLowerCase();
+  }
+}
+
+/**
+ * Record a sent invite
+ * @param {ConnectionInvite} invite
+ */
+export async function recordOutreachInvite(invite) {
+  const state = await getOutreachState();
+  
+  // Add to sent profiles list
+  const normalizedUrl = normalizeProfileUrl(invite.profileUrl);
+  if (!state.sentProfileUrls.includes(normalizedUrl)) {
+    state.sentProfileUrls.push(normalizedUrl);
+  }
+  
+  // Increment weekly count if sent
+  let newWeeklyCount = state.weeklyCount;
+  if (invite.outcome === 'sent') {
+    newWeeklyCount = state.weeklyCount + 1;
+  }
+  
+  await updateOutreachState({
+    weeklyCount: newWeeklyCount,
+    sentProfileUrls: state.sentProfileUrls,
+    lastRunTimestamp: Date.now()
+  });
+  
+  // Add to logs
+  await addOutreachLog(invite);
+}
+
+/**
+ * Add an entry to outreach logs
+ * @param {ConnectionInvite} entry
+ */
+export async function addOutreachLog(entry) {
+  const { [OUTREACH_KEYS.logs]: logs = [] } = await chrome.storage.local.get([OUTREACH_KEYS.logs]);
+  
+  const logEntry = {
+    ...entry,
+    timestamp: entry.timestamp || Date.now()
+  };
+  
+  logs.unshift(logEntry);
+  
+  // Trim logs to max size
+  const trimmedLogs = logs.slice(0, MAX_LOGS);
+  
+  await chrome.storage.local.set({ [OUTREACH_KEYS.logs]: trimmedLogs });
+}
+
+/**
+ * Get outreach logs
+ * @param {number} limit
+ * @returns {Promise<ConnectionInvite[]>}
+ */
+export async function getOutreachLogs(limit = 100) {
+  const { [OUTREACH_KEYS.logs]: logs = [] } = await chrome.storage.local.get([OUTREACH_KEYS.logs]);
+  return logs.slice(0, limit);
+}
+
+/**
+ * Clear outreach logs
+ */
+export async function clearOutreachLogs() {
+  await chrome.storage.local.set({ [OUTREACH_KEYS.logs]: [] });
+}
+
+/**
+ * Check if we can send more invites this week
+ * @returns {Promise<{canSend: boolean, remaining: number}>}
+ */
+export async function canSendMoreInvites() {
+  const state = await getOutreachState();
+  const remaining = MAX_WEEKLY_INVITES - state.weeklyCount;
+  return {
+    canSend: remaining > 0,
+    remaining: Math.max(0, remaining)
+  };
+}
+
+/**
+ * Check if job scan is currently running
+ * @returns {Promise<boolean>}
+ */
+export async function isJobScanRunning() {
+  const { scanRunStatus } = await chrome.storage.local.get(['scanRunStatus']);
+  return scanRunStatus === 'scanning';
+}
+
+/**
+ * Reset outreach state (for testing/admin)
+ */
+export async function resetOutreachState() {
+  await chrome.storage.local.set({
+    [OUTREACH_KEYS.enabled]: false,
+    [OUTREACH_KEYS.weeklyCount]: 0,
+    [OUTREACH_KEYS.weekStart]: getWeekStart(),
+    [OUTREACH_KEYS.status]: 'idle',
+    [OUTREACH_KEYS.lastRun]: 0,
+    [OUTREACH_KEYS.sentProfiles]: [],
+    [OUTREACH_KEYS.logs]: [],
+    [OUTREACH_KEYS.nextScheduled]: 0
+  });
+}

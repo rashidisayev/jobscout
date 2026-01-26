@@ -19,6 +19,7 @@
       <button class="tab-btn" data-tab="settings">Settings</button>
       <button class="tab-btn" data-tab="results">Results</button>
       <button class="tab-btn" data-tab="analytics">Analytics</button>
+      <button class="tab-btn" data-tab="network">Network</button>
     </div>
     
     <!-- Search URLs Tab -->
@@ -217,6 +218,87 @@
           <summary>Raw analytics JSON</summary>
           <pre id="analyticsRawJson">{}</pre>
         </details>
+      </section>
+    </div>
+
+    <!-- Network Tab (Connection Outreach) -->
+    <div class="tab-content" id="network-tab">
+      <section class="section">
+        <div class="outreach-header">
+          <div>
+            <h2 style="margin: 0;">LinkedIn Network Outreach</h2>
+            <p class="help-text">Automatically grow your network by sending connection requests to relevant senior roles.</p>
+          </div>
+        </div>
+
+        <div class="outreach-controls">
+          <div class="outreach-toggle">
+            <label class="checkbox-label">
+              <input type="checkbox" id="outreachEnabled" />
+              <span>Enable automated outreach</span>
+            </label>
+          </div>
+          <div class="outreach-actions">
+            <button id="runOutreachNow" class="btn btn-primary" disabled>Run Now</button>
+            <button id="resetOutreach" class="btn btn-secondary">Reset</button>
+          </div>
+        </div>
+
+        <div class="outreach-status-grid">
+          <div class="outreach-stat">
+            <span class="outreach-stat-value" id="outreachWeeklyCount">0</span>
+            <span class="outreach-stat-label">Invites this week</span>
+          </div>
+          <div class="outreach-stat">
+            <span class="outreach-stat-value" id="outreachRemaining">100</span>
+            <span class="outreach-stat-label">Remaining</span>
+          </div>
+          <div class="outreach-stat">
+            <span class="outreach-stat-value" id="outreachStatus">Idle</span>
+            <span class="outreach-stat-label">Status</span>
+          </div>
+          <div class="outreach-stat">
+            <span class="outreach-stat-value" id="outreachNextRun">-</span>
+            <span class="outreach-stat-label">Next run</span>
+          </div>
+        </div>
+
+        <div class="outreach-info">
+          <h3>Target Titles</h3>
+          <div class="outreach-titles">
+            <span class="outreach-title-chip">VP of Operations</span>
+            <span class="outreach-title-chip">Director of Operations</span>
+            <span class="outreach-title-chip">Director of Technology</span>
+            <span class="outreach-title-chip">Head of Operations</span>
+            <span class="outreach-title-chip">CTO</span>
+            <span class="outreach-title-chip">Data Center Manager</span>
+            <span class="outreach-title-chip">Recruiter</span>
+            <span class="outreach-title-chip">Technical Recruiter</span>
+            <span class="outreach-title-chip">Talent Partner</span>
+          </div>
+        </div>
+
+        <div class="outreach-rules">
+          <h3>Safety Rules</h3>
+          <ul>
+            <li>Maximum 100 invites per week</li>
+            <li>Only runs during business hours (9am-6pm, weekdays)</li>
+            <li>Random delays between actions to appear human</li>
+            <li>Pauses if job search automation is running</li>
+            <li>Stops immediately if LinkedIn rate limit is detected</li>
+            <li>No message/note included with invites</li>
+          </ul>
+        </div>
+
+        <div class="outreach-logs-section">
+          <div class="outreach-logs-header">
+            <h3>Activity Log</h3>
+            <button id="clearOutreachLogs" class="btn btn-secondary btn-sm">Clear Logs</button>
+          </div>
+          <div id="outreachLogs" class="outreach-logs">
+            <div class="outreach-log-empty">No activity yet.</div>
+          </div>
+        </div>
       </section>
     </div>
     

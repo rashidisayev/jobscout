@@ -139,6 +139,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadResults();
   await updateLiveScanStatus();
   await initializePauseButton();
+  await initializeOutreachTab();
   
   // Update last update time every minute
   setInterval(async () => {
@@ -3017,5 +3018,219 @@ function sendRuntimeMessage(message) {
       resolve(response);
     });
   });
+}
+
+// ============================================================
+// Connection Outreach Tab Functions
+// ============================================================
+
+const MAX_WEEKLY_INVITES = 100;
+
+async function initializeOutreachTab() {
+  const outreachEnabledCheckbox = document.getElementById('outreachEnabled');
+  const runOutreachNowBtn = document.getElementById('runOutreachNow');
+  const resetOutreachBtn = document.getElementById('resetOutreach');
+  const clearOutreachLogsBtn = document.getElementById('clearOutreachLogs');
+  
+  if (!outreachEnabledCheckbox) return; // Tab not present
+  
+  // Load initial state
+  await loadOutreachState();
+  await loadOutreachLogs();
+  
+  // Event listeners
+  outreachEnabledCheckbox.addEventListener('change', async () => {
+    const enabled = outreachEnabledCheckbox.checked;
+    try {
+      await sendRuntimeMessage({ action: 'setOutreachEnabled', enabled });
+      if (runOutreachNowBtn) runOutreachNowBtn.disabled = !enabled;
+      showToast(enabled ? 'Outreach enabled' : 'Outreach disabled', 'success');
+      await loadOutreachState();
+    } catch (error) {
+      console.error('Error setting outreach state:', error);
+      showToast('Failed to update outreach state', 'error');
+      outreachEnabledCheckbox.checked = !enabled; // Revert
+    }
+  });
+  
+  if (runOutreachNowBtn) {
+    runOutreachNowBtn.addEventListener('click', async () => {
+      runOutreachNowBtn.disabled = true;
+      runOutreachNowBtn.textContent = 'Running...';
+      
+      try {
+        const result = await sendRuntimeMessage({ action: 'runOutreachNow' });
+        if (result.success) {
+          showToast(`Sent ${result.sentCount || 0} connection requests`, 'success');
+        } else {
+          showToast(`Outreach: ${result.reason || 'completed'}`, 'info');
+        }
+        await loadOutreachState();
+        await loadOutreachLogs();
+      } catch (error) {
+        console.error('Error running outreach:', error);
+        showToast('Failed to run outreach: ' + error.message, 'error');
+      } finally {
+        runOutreachNowBtn.textContent = 'Run Now';
+        const state = await sendRuntimeMessage({ action: 'getOutreachState' });
+        runOutreachNowBtn.disabled = !state.enabled;
+      }
+    });
+  }
+  
+  if (resetOutreachBtn) {
+    resetOutreachBtn.addEventListener('click', async () => {
+      if (!confirm('Reset all outreach data? This will clear sent profiles list and weekly count.')) {
+        return;
+      }
+      
+      try {
+        await sendRuntimeMessage({ action: 'resetOutreachState' });
+        if (outreachEnabledCheckbox) outreachEnabledCheckbox.checked = false;
+        if (runOutreachNowBtn) runOutreachNowBtn.disabled = true;
+        showToast('Outreach state reset', 'success');
+        await loadOutreachState();
+        await loadOutreachLogs();
+      } catch (error) {
+        console.error('Error resetting outreach:', error);
+        showToast('Failed to reset outreach', 'error');
+      }
+    });
+  }
+  
+  if (clearOutreachLogsBtn) {
+    clearOutreachLogsBtn.addEventListener('click', async () => {
+      try {
+        await sendRuntimeMessage({ action: 'clearOutreachLogs' });
+        await loadOutreachLogs();
+        showToast('Logs cleared', 'success');
+      } catch (error) {
+        console.error('Error clearing logs:', error);
+        showToast('Failed to clear logs', 'error');
+      }
+    });
+  }
+  
+  // Periodically update state
+  setInterval(async () => {
+    const activeTab = document.querySelector('.tab-btn.active');
+    if (activeTab && activeTab.dataset.tab === 'network') {
+      await loadOutreachState();
+    }
+  }, 10000); // Every 10 seconds when tab is active
+}
+
+async function loadOutreachState() {
+  try {
+    const state = await sendRuntimeMessage({ action: 'getOutreachState' });
+    
+    const outreachEnabledCheckbox = document.getElementById('outreachEnabled');
+    const runOutreachNowBtn = document.getElementById('runOutreachNow');
+    const weeklyCountEl = document.getElementById('outreachWeeklyCount');
+    const remainingEl = document.getElementById('outreachRemaining');
+    const statusEl = document.getElementById('outreachStatus');
+    const nextRunEl = document.getElementById('outreachNextRun');
+    
+    if (outreachEnabledCheckbox) {
+      outreachEnabledCheckbox.checked = state.enabled;
+    }
+    
+    if (runOutreachNowBtn) {
+      runOutreachNowBtn.disabled = !state.enabled || state.status === 'running';
+    }
+    
+    if (weeklyCountEl) {
+      weeklyCountEl.textContent = state.weeklyCount || 0;
+    }
+    
+    if (remainingEl) {
+      const remaining = Math.max(0, MAX_WEEKLY_INVITES - (state.weeklyCount || 0));
+      remainingEl.textContent = remaining;
+    }
+    
+    if (statusEl) {
+      const statusText = state.status === 'running' ? 'Running...' : 
+                        state.enabled ? 'Enabled' : 'Disabled';
+      statusEl.textContent = statusText;
+      statusEl.style.color = state.status === 'running' ? '#059669' : 
+                            state.enabled ? '#2563eb' : '#6b7280';
+    }
+    
+    if (nextRunEl) {
+      if (state.enabled && state.nextScheduled) {
+        const nextDate = new Date(state.nextScheduled);
+        const now = new Date();
+        const diffMs = nextDate - now;
+        
+        if (diffMs > 0) {
+          const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+          const diffMins = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+          
+          if (diffHours > 24) {
+            nextRunEl.textContent = nextDate.toLocaleDateString();
+          } else if (diffHours > 0) {
+            nextRunEl.textContent = `${diffHours}h ${diffMins}m`;
+          } else {
+            nextRunEl.textContent = `${diffMins}m`;
+          }
+        } else {
+          nextRunEl.textContent = 'Soon';
+        }
+      } else {
+        nextRunEl.textContent = state.enabled ? 'Scheduling...' : '-';
+      }
+    }
+    
+  } catch (error) {
+    console.error('Error loading outreach state:', error);
+  }
+}
+
+async function loadOutreachLogs() {
+  try {
+    const { logs = [] } = await sendRuntimeMessage({ action: 'getOutreachLogs', limit: 50 });
+    const logsContainer = document.getElementById('outreachLogs');
+    
+    if (!logsContainer) return;
+    
+    if (logs.length === 0) {
+      logsContainer.innerHTML = '<div class="outreach-log-empty">No activity yet.</div>';
+      return;
+    }
+    
+    logsContainer.innerHTML = logs.map(entry => {
+      const iconClass = entry.outcome === 'sent' ? 'sent' : 
+                       entry.outcome === 'skipped' ? 'skipped' : 'error';
+      const icon = entry.outcome === 'sent' ? '✓' : 
+                  entry.outcome === 'skipped' ? '○' : '✗';
+      
+      const timeStr = new Date(entry.timestamp).toLocaleString();
+      const name = entry.profileName || 'Unknown';
+      const title = entry.title || '';
+      const reason = entry.reason || '';
+      
+      return `
+        <div class="outreach-log-entry">
+          <div class="outreach-log-icon ${iconClass}">${icon}</div>
+          <div class="outreach-log-content">
+            <div class="outreach-log-name">${escapeHtml(name)}</div>
+            ${title ? `<div class="outreach-log-title">${escapeHtml(title)}</div>` : ''}
+            ${reason ? `<div class="outreach-log-reason">${escapeHtml(reason)}</div>` : ''}
+          </div>
+          <div class="outreach-log-time">${timeStr}</div>
+        </div>
+      `;
+    }).join('');
+    
+  } catch (error) {
+    console.error('Error loading outreach logs:', error);
+  }
+}
+
+function escapeHtml(text) {
+  if (!text) return '';
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
 }
 

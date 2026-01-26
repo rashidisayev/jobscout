@@ -11,6 +11,7 @@ JobScout is a Chrome Extension (Manifest V3) that helps you monitor LinkedIn Job
 - **Local Storage**: All data stored locally in your browser - no external servers
 - **CSV Export**: Export all collected jobs with matching scores
 - **Google Sheets Integration**: Save jobs directly to your own Google Sheet for tracking applications
+- **LinkedIn Network Outreach**: Automatically grow your professional network by sending connection requests to relevant senior roles
 - **Privacy-Focused**: Respects LinkedIn's Terms of Service, requires you to be logged in
 
 ## Installation
@@ -114,6 +115,47 @@ JobScout can generate analytics on your job list using a local Ollama server.
 1. Open JobScout Options → **Analytics** tab
 2. Click **Run Analytics**
 3. If you see a 403 error, confirm Ollama is running with the correct `OLLAMA_ORIGINS` value and then reload the extension
+
+### Network Outreach (LinkedIn Connection Automation)
+
+JobScout can automatically grow your professional network by sending connection requests to relevant senior roles while avoiding bot-like behavior.
+
+**Target Profiles**:
+- VP of Operations / Vice President of Operations
+- Director of Operations / Technology / Infrastructure / Platform
+- Head of Operations
+- CTO / Chief Technology Officer
+- Data Center Manager / Head of Data Center
+- Recruiter / Technical Recruiter / Talent Partner
+
+**Safety Rules**:
+- Maximum **100 invites per week** (tracked automatically, resets each Monday)
+- Only runs during **business hours** (9am-6pm, weekdays)
+- **Random delays** between actions (2-7 seconds) to appear human
+- **Pauses automatically** if job search scanning is running
+- **Stops immediately** if LinkedIn rate limit is detected
+- **No message/note** included with invites (just clicks "Send without a note")
+- Skips profiles that are already connected, have pending invites, or don't match target titles
+
+**How to Use**:
+1. Open JobScout Options → **Network** tab
+2. Enable the **"Enable automated outreach"** toggle
+3. Click **Run Now** to start immediately, or let it run automatically during business hours
+4. View the **Activity Log** to see sent invites, skipped profiles, and any errors
+
+**Activity Log**:
+Each action is logged with:
+- Date and time
+- Profile URL and name
+- Title
+- Outcome (sent / skipped / error)
+- Reason for skip or error
+
+**Notes**:
+- The script processes up to 5 pages of search results per run
+- Profiles are processed in random order to avoid patterns
+- Weekly count resets automatically each Monday
+- You can reset all outreach data using the **Reset** button
 
 ### Google Sheets Integration (Application Tracking)
 
@@ -263,14 +305,15 @@ All parsing, embeddings, and scoring happen **locally in your browser**. No exte
 ```
 jobsearch/
 ├── manifest.json          # Extension manifest (MV3)
-├── background.js          # Service worker for alarms and scanning
-├── content.js             # Content script for LinkedIn scraping
+├── background.js          # Service worker for alarms, scanning, and outreach scheduling
+├── content.js             # Content script for LinkedIn job scraping
+├── connectionContent.js   # Content script for LinkedIn connection outreach
 ├── popup.html/js          # Extension popup UI
 ├── options.html/js/css    # Options page for configuration
 ├── scripts/
 │   ├── nlp.js            # NLP matching utilities
 │   ├── parser.js         # Resume file parsing
-│   ├── storage.js        # Storage helpers
+│   ├── storage.js        # Storage helpers (jobs, outreach state, logs)
 │   └── export.js         # CSV export utility
 ├── assets/               # Extension icons
 ├── vendor/

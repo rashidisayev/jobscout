@@ -113,6 +113,55 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       sendResponse({ descriptionHtml: '', extractors: null, error: error.message });
     });
     return true;
+  } else if (request.action === 'getOutreachState') {
+    getOutreachState().then(state => sendResponse(state));
+    return true;
+  } else if (request.action === 'setOutreachEnabled') {
+    (async () => {
+      await updateOutreachState({ enabled: request.enabled });
+      if (request.enabled) {
+        await scheduleOutreachRun();
+      } else {
+        chrome.alarms.clear('outreach');
+      }
+      sendResponse({ success: true, enabled: request.enabled });
+    })();
+    return true;
+  } else if (request.action === 'runOutreachNow') {
+    performOutreachRun(true).then(result => sendResponse(result)); // forceRun=true for manual trigger
+    return true;
+  } else if (request.action === 'getOutreachLogs') {
+    chrome.storage.local.get(['outreachLogs']).then(({ outreachLogs = [] }) => {
+      sendResponse({ logs: outreachLogs.slice(0, request.limit || 100) });
+    });
+    return true;
+  } else if (request.action === 'clearOutreachLogs') {
+    chrome.storage.local.set({ outreachLogs: [] }).then(() => {
+      sendResponse({ success: true });
+    });
+    return true;
+  } else if (request.action === 'resetOutreachState') {
+    (async () => {
+      const now = new Date();
+      const day = now.getDay();
+      const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+      const monday = new Date(now.setDate(diff));
+      monday.setHours(0, 0, 0, 0);
+      
+      await chrome.storage.local.set({
+        outreachEnabled: false,
+        outreachWeeklyCount: 0,
+        outreachWeekStart: monday.getTime(),
+        outreachStatus: 'idle',
+        outreachLastRun: 0,
+        outreachSentProfiles: [],
+        outreachLogs: [],
+        outreachNextScheduled: 0
+      });
+      chrome.alarms.clear('outreach');
+      sendResponse({ success: true });
+    })();
+    return true;
   }
 });
 
@@ -1253,6 +1302,443 @@ chrome.runtime.onStartup.addListener(() => {
 
 // Update badge when extension starts
 updateBadge();
+
+// ============================================================
+// Connection Outreach Automation
+// ============================================================
+
+const OUTREACH_CONFIG = {
+  MAX_WEEKLY_INVITES: 100,
+  MAX_INVITES_PER_RUN: 5,
+  BUSINESS_HOURS_START: 9,
+  BUSINESS_HOURS_END: 18,
+  MIN_DELAY_BETWEEN_RUNS_MS: 30 * 60 * 1000, // 30 minutes minimum
+  TARGET_TITLES: [
+    'VP of Operations', 'Vice President of Operations', 'Director of Operations',
+    'Director of Technology', 'Director of Infrastructure', 'Director of Platform',
+    'Head of Operations', 'CTO', 'Chief Technology Officer',
+    'Data Center Manager', 'Head of Data Center',
+    'Recruiter', 'Technical Recruiter', 'Talent Partner'
+  ]
+};
+
+// Build LinkedIn people search URL
+function buildOutreachSearchUrl() {
+  // Use a simpler search query - just search for key titles
+  // LinkedIn will show various matches; content script filters by exact title match
+  const simpleQuery = 'Director Operations OR VP Operations OR CTO OR Recruiter';
+  const encodedQuery = encodeURIComponent(simpleQuery);
+  return `https://www.linkedin.com/search/results/people/?keywords=${encodedQuery}&origin=GLOBAL_SEARCH_HEADER`;
+}
+
+// Check if it's business hours
+function isBusinessHours() {
+  const now = new Date();
+  const hour = now.getHours();
+  const day = now.getDay();
+  // Skip weekends
+  if (day === 0 || day === 6) return false;
+  return hour >= OUTREACH_CONFIG.BUSINESS_HOURS_START && hour < OUTREACH_CONFIG.BUSINESS_HOURS_END;
+}
+
+// Get random time within business hours for next run
+function getNextOutreachTime() {
+  const now = new Date();
+  const currentHour = now.getHours();
+  const currentDay = now.getDay();
+  
+  // If it's a weekend, schedule for Monday
+  let targetDate = new Date(now);
+  if (currentDay === 0) { // Sunday
+    targetDate.setDate(targetDate.getDate() + 1);
+  } else if (currentDay === 6) { // Saturday
+    targetDate.setDate(targetDate.getDate() + 2);
+  } else if (currentHour >= OUTREACH_CONFIG.BUSINESS_HOURS_END) {
+    // Past business hours, schedule for next day
+    targetDate.setDate(targetDate.getDate() + 1);
+    if (targetDate.getDay() === 6) targetDate.setDate(targetDate.getDate() + 2);
+    if (targetDate.getDay() === 0) targetDate.setDate(targetDate.getDate() + 1);
+  }
+  
+  // Set random time within business hours
+  const randomHour = OUTREACH_CONFIG.BUSINESS_HOURS_START + 
+    Math.floor(Math.random() * (OUTREACH_CONFIG.BUSINESS_HOURS_END - OUTREACH_CONFIG.BUSINESS_HOURS_START));
+  const randomMinute = Math.floor(Math.random() * 60);
+  
+  targetDate.setHours(randomHour, randomMinute, 0, 0);
+  
+  // If the target time is in the past (same day, but earlier hour), add a random delay
+  if (targetDate.getTime() <= now.getTime()) {
+    targetDate = new Date(now.getTime() + OUTREACH_CONFIG.MIN_DELAY_BETWEEN_RUNS_MS + Math.random() * 60 * 60 * 1000);
+  }
+  
+  return targetDate.getTime();
+}
+
+// Get outreach state from storage
+async function getOutreachState() {
+  const data = await chrome.storage.local.get([
+    'outreachEnabled',
+    'outreachWeeklyCount',
+    'outreachWeekStart',
+    'outreachStatus',
+    'outreachLastRun',
+    'outreachSentProfiles',
+    'outreachNextScheduled'
+  ]);
+  
+  // Get start of current week (Monday)
+  const now = new Date();
+  const day = now.getDay();
+  const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+  const monday = new Date(now.setDate(diff));
+  monday.setHours(0, 0, 0, 0);
+  const currentWeekStart = monday.getTime();
+  
+  // Reset weekly count if new week
+  let weeklyCount = data.outreachWeeklyCount || 0;
+  const storedWeekStart = data.outreachWeekStart || 0;
+  if (storedWeekStart < currentWeekStart) {
+    weeklyCount = 0;
+    await chrome.storage.local.set({
+      outreachWeeklyCount: 0,
+      outreachWeekStart: currentWeekStart
+    });
+  }
+  
+  return {
+    enabled: data.outreachEnabled || false,
+    weeklyCount,
+    status: data.outreachStatus || 'idle',
+    lastRun: data.outreachLastRun || 0,
+    sentProfiles: data.outreachSentProfiles || [],
+    nextScheduled: data.outreachNextScheduled || 0
+  };
+}
+
+// Update outreach state
+async function updateOutreachState(updates) {
+  const toSet = {};
+  if (updates.enabled !== undefined) toSet.outreachEnabled = updates.enabled;
+  if (updates.weeklyCount !== undefined) toSet.outreachWeeklyCount = updates.weeklyCount;
+  if (updates.status !== undefined) toSet.outreachStatus = updates.status;
+  if (updates.lastRun !== undefined) toSet.outreachLastRun = updates.lastRun;
+  if (updates.sentProfiles !== undefined) toSet.outreachSentProfiles = updates.sentProfiles;
+  if (updates.nextScheduled !== undefined) toSet.outreachNextScheduled = updates.nextScheduled;
+  await chrome.storage.local.set(toSet);
+}
+
+// Add log entry
+async function addOutreachLog(entry) {
+  const { outreachLogs = [] } = await chrome.storage.local.get(['outreachLogs']);
+  const logEntry = { ...entry, timestamp: entry.timestamp || Date.now() };
+  outreachLogs.unshift(logEntry);
+  const trimmed = outreachLogs.slice(0, 500);
+  await chrome.storage.local.set({ outreachLogs: trimmed });
+}
+
+// Schedule next outreach run
+async function scheduleOutreachRun() {
+  const state = await getOutreachState();
+  if (!state.enabled) {
+    console.log('[Outreach] Disabled, not scheduling');
+    return;
+  }
+  
+  // Check if we've hit weekly limit
+  const remaining = OUTREACH_CONFIG.MAX_WEEKLY_INVITES - state.weeklyCount;
+  if (remaining <= 0) {
+    console.log('[Outreach] Weekly limit reached, not scheduling until next week');
+    return;
+  }
+  
+  const nextTime = getNextOutreachTime();
+  await updateOutreachState({ nextScheduled: nextTime });
+  
+  // Create alarm
+  const delayMinutes = Math.max(1, Math.ceil((nextTime - Date.now()) / 60000));
+  chrome.alarms.create('outreach', { delayInMinutes: delayMinutes });
+  
+  console.log(`[Outreach] Scheduled next run in ${delayMinutes} minutes (${new Date(nextTime).toLocaleString()})`);
+}
+
+// Perform outreach run
+// forceRun: true bypasses business hours check (for manual "Run Now")
+async function performOutreachRun(forceRun = false) {
+  console.log('[Outreach] performOutreachRun called, forceRun:', forceRun);
+  
+  const state = await getOutreachState();
+  console.log('[Outreach] Current state:', JSON.stringify(state));
+  
+  if (!state.enabled) {
+    console.log('[Outreach] Disabled, skipping run');
+    return { success: false, reason: 'disabled' };
+  }
+  
+  // Check if job scan is running
+  const { scanRunStatus } = await chrome.storage.local.get(['scanRunStatus']);
+  if (scanRunStatus === 'scanning') {
+    console.log('[Outreach] Job scan is running, postponing outreach');
+    await scheduleOutreachRun(); // Reschedule for later
+    return { success: false, reason: 'job_scan_running' };
+  }
+  
+  // Check business hours (skip if forceRun from manual trigger)
+  if (!forceRun && !isBusinessHours()) {
+    console.log('[Outreach] Outside business hours, rescheduling');
+    await scheduleOutreachRun();
+    return { success: false, reason: 'outside_business_hours' };
+  }
+  
+  // Check weekly limit
+  const remaining = OUTREACH_CONFIG.MAX_WEEKLY_INVITES - state.weeklyCount;
+  if (remaining <= 0) {
+    console.log('[Outreach] Weekly limit reached');
+    return { success: false, reason: 'weekly_limit_reached' };
+  }
+  
+  const maxInvites = Math.min(OUTREACH_CONFIG.MAX_INVITES_PER_RUN, remaining);
+  const MAX_PAGES = 5; // Process up to 5 pages per run
+  
+  console.log(`[Outreach] Starting run, max invites: ${maxInvites}, weekly remaining: ${remaining}`);
+  await updateOutreachState({ status: 'running' });
+  
+  let totalSentCount = 0;
+  const updatedSentProfiles = [...state.sentProfiles];
+  const allResults = [];
+  
+  try {
+    // Create a tab for outreach
+    let tab = null;
+    const searchUrl = buildOutreachSearchUrl();
+    console.log('[Outreach] Opening search URL:', searchUrl);
+    
+    tab = await chrome.tabs.create({
+      url: searchUrl,
+      active: true
+    });
+    console.log('[Outreach] Created tab:', tab.id);
+    
+    // Process multiple pages
+    for (let pageNum = 1; pageNum <= MAX_PAGES; pageNum++) {
+      console.log(`[Outreach] ===== Processing page ${pageNum} of ${MAX_PAGES} =====`);
+      
+      // Check if we've sent enough
+      if (totalSentCount >= maxInvites) {
+        console.log('[Outreach] Reached max invites, stopping pagination');
+        break;
+      }
+      
+      // Wait for tab to load
+      await new Promise((resolve) => {
+        const checkTab = async () => {
+          try {
+            const t = await chrome.tabs.get(tab.id);
+            if (t.status === 'complete' && t.url?.includes('linkedin.com/search')) {
+              resolve();
+            } else {
+              setTimeout(checkTab, 500);
+            }
+          } catch (e) {
+            setTimeout(resolve, 3000);
+          }
+        };
+        setTimeout(checkTab, 2000);
+      });
+      
+      // Wait for content to render
+      console.log('[Outreach] Page loaded, waiting for content...');
+      await sleep(randomDelay(3000, 5000));
+      
+      // Inject content script
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          files: ['connectionContent.js']
+        });
+        await sleep(1000);
+      } catch (injectError) {
+        // Script may already be injected
+      }
+      
+      // Send message to content script
+      let result = null;
+      let retries = 3;
+      const invitesRemaining = maxInvites - totalSentCount;
+      
+      console.log(`[Outreach] Processing page ${pageNum}, invites remaining: ${invitesRemaining}`);
+      
+      while (retries > 0 && !result) {
+        try {
+          result = await chrome.tabs.sendMessage(tab.id, {
+            action: 'processOutreach',
+            maxInvites: invitesRemaining,
+            sentProfileUrls: updatedSentProfiles,
+            scrollFirst: true
+          });
+        } catch (e) {
+          retries--;
+          if (retries > 0) {
+            console.log(`[Outreach] Message failed, retrying... (${retries} left)`);
+            await sleep(2000);
+          }
+        }
+      }
+      
+      if (!result) {
+        console.error('[Outreach] Failed to communicate with content script on page', pageNum);
+        break;
+      }
+      
+      // Handle rate limit
+      if (result.error === 'RATE_LIMIT') {
+        console.warn('[Outreach] Rate limit detected!');
+        await addOutreachLog({
+          profileUrl: '',
+          profileName: 'SYSTEM',
+          title: '',
+          company: '',
+          outcome: 'error',
+          reason: 'LinkedIn rate limit detected'
+        });
+        break;
+      }
+      
+      // Process page results
+      const pageSentCount = result.sentCount || 0;
+      totalSentCount += pageSentCount;
+      
+      for (const entry of (result.results || [])) {
+        allResults.push(entry);
+        if (entry.outcome === 'sent' && entry.profileUrl) {
+          updatedSentProfiles.push(entry.profileUrl.toLowerCase());
+        }
+      }
+      
+      console.log(`[Outreach] Page ${pageNum} complete: sent ${pageSentCount}, total sent: ${totalSentCount}`);
+      
+      // If we've sent enough or no more to send on this page, we might stop
+      if (totalSentCount >= maxInvites) {
+        console.log('[Outreach] Reached max invites');
+        break;
+      }
+      
+      // Navigate to next page if not the last page
+      if (pageNum < MAX_PAGES) {
+        console.log('[Outreach] Navigating to next page...');
+        
+        // Click Next button via script injection
+        try {
+          const nextPageResult = await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            func: () => {
+              // Look for Next button
+              const nextBtn = document.querySelector('button[aria-label="Next"]') ||
+                              document.querySelector('button.artdeco-pagination__button--next') ||
+                              document.querySelector('[aria-label="Next"]');
+              
+              if (nextBtn && !nextBtn.disabled) {
+                nextBtn.click();
+                return { success: true };
+              }
+              
+              // Try finding by text
+              const buttons = document.querySelectorAll('button');
+              for (const btn of buttons) {
+                if (btn.textContent?.trim().toLowerCase() === 'next' && !btn.disabled) {
+                  btn.click();
+                  return { success: true };
+                }
+              }
+              
+              return { success: false, reason: 'Next button not found or disabled' };
+            }
+          });
+          
+          if (!nextPageResult?.[0]?.result?.success) {
+            console.log('[Outreach] Could not navigate to next page:', nextPageResult?.[0]?.result?.reason);
+            break;
+          }
+          
+          // Wait for page navigation
+          console.log('[Outreach] Waiting for next page to load...');
+          await sleep(randomDelay(3000, 5000));
+          
+        } catch (navError) {
+          console.error('[Outreach] Navigation error:', navError);
+          break;
+        }
+      }
+    }
+    
+    // Close the tab
+    console.log('[Outreach] Closing tab...');
+    await sleep(2000);
+    try {
+      await chrome.tabs.remove(tab.id);
+    } catch (e) {
+      // Tab might already be closed
+    }
+    
+    // Log all results
+    for (const entry of allResults) {
+      await addOutreachLog(entry);
+    }
+    
+    // Update state
+    await updateOutreachState({
+      status: 'idle',
+      weeklyCount: state.weeklyCount + totalSentCount,
+      lastRun: Date.now(),
+      sentProfiles: updatedSentProfiles
+    });
+    
+    console.log(`[Outreach] Completed. Sent: ${totalSentCount}, Weekly total: ${state.weeklyCount + totalSentCount}`);
+    
+    // Schedule next run
+    await scheduleOutreachRun();
+    
+    return { success: true, sentCount: totalSentCount, results: allResults };
+    
+  } catch (error) {
+    console.error('[Outreach] Error during run:', error);
+    await addOutreachLog({
+      profileUrl: '',
+      profileName: 'SYSTEM',
+      title: '',
+      company: '',
+      outcome: 'error',
+      reason: error.message
+    });
+    await updateOutreachState({ status: 'idle' });
+    await scheduleOutreachRun();
+    return { success: false, reason: error.message };
+  }
+}
+
+// Handle outreach alarm
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name === 'outreach') {
+    console.log('[Outreach] Alarm triggered');
+    await performOutreachRun();
+  }
+});
+
+// Initialize outreach on startup
+chrome.runtime.onStartup.addListener(async () => {
+  const state = await getOutreachState();
+  if (state.enabled) {
+    await scheduleOutreachRun();
+  }
+});
+
+// Check outreach scheduling on install/update
+chrome.runtime.onInstalled.addListener(async () => {
+  const state = await getOutreachState();
+  if (state.enabled) {
+    await scheduleOutreachRun();
+  }
+});
 
 // Extract job description from a tab by navigating to it and waiting for content to load
 async function extractJobDescriptionFromTab(jobUrl) {
