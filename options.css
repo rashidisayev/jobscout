@@ -1297,6 +1297,32 @@ footer {
   color: #6b7280;
 }
 
+#ollamaPromptStatus {
+  color: #6b7280;
+}
+
+#ollamaPrompt {
+  font-family: 'Courier New', 'Monaco', 'Menlo', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  background: #ffffff;
+  color: #1f2937;
+}
+
+#ollamaPrompt:focus {
+  outline: 2px solid #4f46e5;
+  outline-offset: 2px;
+}
+
+code {
+  background: #f3f4f6;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: 'Courier New', 'Monaco', 'Menlo', monospace;
+  font-size: 11px;
+  color: #dc2626;
+}
+
 /* Results toolbar button sizing consistency */
 .results-controls .btn-danger {
   padding: 9px 18px;

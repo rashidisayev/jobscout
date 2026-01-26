@@ -26,6 +26,80 @@ const DEFAULT_OLLAMA_URL = 'http://localhost:11434';
 const OLLAMA_TIMEOUT_MS = 2500;
 let lastAnalyticsJobList = [];
 let ollamaBaseUrl = DEFAULT_OLLAMA_URL;
+let ollamaPrompt = '';
+
+const DEFAULT_OLLAMA_PROMPT = `You are an analytics engine. Analyze the following JSON array of job items and return ONLY valid JSON.
+
+Rules:
+1) If fields are missing, infer cautiously from title/location/description/keywords (e.g., remote_type, seniority), but never invent salary or dates.
+2) Normalize:
+   - remote_type into: Remote / Hybrid / On-site / Unknown
+   - seniority into: IC / Lead / Manager / Senior Manager / Director / Senior Director / VP+ / Unknown (best effort)
+   - status into: Saved / Applied / Interview / Rejected / Offer / Unknown (best effort)
+3) Provide insights that help the user decide where to focus:
+   - Top companies hiring
+   - Most common titles/keywords
+   - Remote/hybrid distribution
+   - Location hotspots
+   - Posting recency (if date_posted exists)
+   - Pipeline health (if status exists)
+   - Any anomalies (duplicates, missing info, suspicious postings)
+4) Output MUST be valid JSON and MUST follow the schema below exactly.
+5) Do not include markdown, explanations, or extra text. JSON only.
+
+Schema:
+{
+  "summary": {
+    "total_roles": number,
+    "unique_companies": number,
+    "remote_distribution": { "Remote": number, "Hybrid": number, "On-site": number, "Unknown": number },
+    "top_locations": [ { "location": string, "count": number } ],
+    "top_companies": [ { "company": string, "count": number } ],
+    "top_titles": [ { "title": string, "count": number } ],
+    "top_keywords": [ { "keyword": string, "count": number } ],
+    "recency": {
+      "has_date_posted": boolean,
+      "posted_last_7_days": number,
+      "posted_last_30_days": number,
+      "older_than_30_days": number
+    },
+    "pipeline": {
+      "has_status": boolean,
+      "Saved": number,
+      "Applied": number,
+      "Interview": number,
+      "Rejected": number,
+      "Offer": number,
+      "Unknown": number
+    }
+  },
+  "highlights": [
+    { "title": string, "detail": string, "priority": "high" | "medium" | "low" }
+  ],
+  "charts": [
+    {
+      "id": string,
+      "title": string,
+      "type": "bar" | "line" | "pie" | "stacked_bar" | "heatmap",
+      "x": string,
+      "y": string,
+      "series": string | null,
+      "data": [ { "x": string, "y": number, "series": string | null } ],
+      "notes": string
+    }
+  ],
+  "quality": {
+    "duplicates_found": number,
+    "missing_critical_fields": [ string ],
+    "data_warnings": [ string ]
+  },
+  "recommended_actions": [
+    { "action": string, "reason": string, "impact": "high" | "medium" | "low" }
+  ]
+}
+
+Job list JSON:
+{JOB_LIST_JSON}`;
 
 function buildOllamaUrl(pathname) {
   try {
@@ -92,7 +166,18 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('testGoogleSheetUrl').addEventListener('click', testGoogleSheetConnection);
   document.getElementById('showAppsScriptHelp').addEventListener('click', showAppsScriptHelp);
   document.getElementById('checkForUpdates').addEventListener('click', checkForUpdates);
-  document.getElementById('saveOllamaServerUrl').addEventListener('click', saveOllamaSettings);
+  const saveOllamaServerBtn = document.getElementById('saveOllamaServerUrl');
+  if (saveOllamaServerBtn) {
+    saveOllamaServerBtn.addEventListener('click', saveOllamaSettings);
+  }
+  const saveOllamaPromptBtn = document.getElementById('saveOllamaPrompt');
+  if (saveOllamaPromptBtn) {
+    saveOllamaPromptBtn.addEventListener('click', saveOllamaPrompt);
+  }
+  const resetOllamaPromptBtn = document.getElementById('resetOllamaPrompt');
+  if (resetOllamaPromptBtn) {
+    resetOllamaPromptBtn.addEventListener('click', resetOllamaPrompt);
+  }
   const runAnalyticsBtn = document.getElementById('runAnalytics');
   if (runAnalyticsBtn) {
     runAnalyticsBtn.addEventListener('click', () => loadAnalytics(true));
@@ -107,7 +192,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   
   // Listen for storage changes to update live status and last update time
-  chrome.storage.onChanged.addListener((changes, areaName) => {
+  chrome.storage.onChanged.addListener(async (changes, areaName) => {
     // Update last update time if lastScanTime changed
     if (changes.lastScanTime) {
       updateLastUpdateTime(changes.lastScanTime.newValue);
@@ -123,6 +208,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       // Update results if jobs changed
       if (changes.jobs) {
         analyticsLoaded = false;
+        currentPage = 1;
         loadResults();
       }
 
@@ -141,7 +227,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         loadResults();
       }
 
-      if (changes.ollamaServerUrl) {
+      if (changes.ollamaServerUrl || changes.ollamaPrompt) {
         analyticsLoaded = false;
         await loadOllamaSettings();
       }
@@ -616,80 +702,9 @@ function getOllamaFallbackJson() {
 }
 
 async function requestAnalyticsFromOllama(jobList, modelName) {
-  const prompt = `
-You are an analytics engine. Analyze the following JSON array of job items and return ONLY valid JSON.
-
-Rules:
-1) If fields are missing, infer cautiously from title/location/description/keywords (e.g., remote_type, seniority), but never invent salary or dates.
-2) Normalize:
-   - remote_type into: Remote / Hybrid / On-site / Unknown
-   - seniority into: IC / Lead / Manager / Senior Manager / Director / Senior Director / VP+ / Unknown (best effort)
-   - status into: Saved / Applied / Interview / Rejected / Offer / Unknown (best effort)
-3) Provide insights that help the user decide where to focus:
-   - Top companies hiring
-   - Most common titles/keywords
-   - Remote/hybrid distribution
-   - Location hotspots
-   - Posting recency (if date_posted exists)
-   - Pipeline health (if status exists)
-   - Any anomalies (duplicates, missing info, suspicious postings)
-4) Output MUST be valid JSON and MUST follow the schema below exactly.
-5) Do not include markdown, explanations, or extra text. JSON only.
-
-Schema:
-{
-  "summary": {
-    "total_roles": number,
-    "unique_companies": number,
-    "remote_distribution": { "Remote": number, "Hybrid": number, "On-site": number, "Unknown": number },
-    "top_locations": [ { "location": string, "count": number } ],
-    "top_companies": [ { "company": string, "count": number } ],
-    "top_titles": [ { "title": string, "count": number } ],
-    "top_keywords": [ { "keyword": string, "count": number } ],
-    "recency": {
-      "has_date_posted": boolean,
-      "posted_last_7_days": number,
-      "posted_last_30_days": number,
-      "older_than_30_days": number
-    },
-    "pipeline": {
-      "has_status": boolean,
-      "Saved": number,
-      "Applied": number,
-      "Interview": number,
-      "Rejected": number,
-      "Offer": number,
-      "Unknown": number
-    }
-  },
-  "highlights": [
-    { "title": string, "detail": string, "priority": "high" | "medium" | "low" }
-  ],
-  "charts": [
-    {
-      "id": string,
-      "title": string,
-      "type": "bar" | "line" | "pie" | "stacked_bar" | "heatmap",
-      "x": string,
-      "y": string,
-      "series": string | null,
-      "data": [ { "x": string, "y": number, "series": string | null } ],
-      "notes": string
-    }
-  ],
-  "quality": {
-    "duplicates_found": number,
-    "missing_critical_fields": [ string ],
-    "data_warnings": [ string ]
-  },
-  "recommended_actions": [
-    { "action": string, "reason": string, "impact": "high" | "medium" | "low" }
-  ]
-}
-
-Job list JSON:
-${JSON.stringify(jobList)}
-  `.trim();
+  const promptTemplate = ollamaPrompt || DEFAULT_OLLAMA_PROMPT;
+  const jobListJson = JSON.stringify(jobList);
+  const prompt = promptTemplate.replace(/{JOB_LIST_JSON}/g, jobListJson).trim();
 
   const response = await fetch(buildOllamaUrl('/api/generate'), {
     method: 'POST',
@@ -877,8 +892,9 @@ function normalizeOllamaBaseUrl(value) {
 }
 
 async function loadOllamaSettings() {
-  const { ollamaServerUrl } = await chrome.storage.local.get(['ollamaServerUrl']);
+  const { ollamaServerUrl, ollamaPrompt: storedPrompt } = await chrome.storage.local.get(['ollamaServerUrl', 'ollamaPrompt']);
   ollamaBaseUrl = normalizeOllamaBaseUrl(ollamaServerUrl || DEFAULT_OLLAMA_URL);
+  ollamaPrompt = storedPrompt || DEFAULT_OLLAMA_PROMPT;
 
   const input = document.getElementById('ollamaServerUrl');
   const status = document.getElementById('ollamaServerStatus');
@@ -887,6 +903,11 @@ async function loadOllamaSettings() {
   }
   if (status) {
     status.textContent = `Using: ${ollamaBaseUrl}`;
+  }
+
+  const promptTextarea = document.getElementById('ollamaPrompt');
+  if (promptTextarea) {
+    promptTextarea.value = ollamaPrompt;
   }
 }
 
@@ -903,6 +924,48 @@ async function saveOllamaSettings() {
     status.textContent = `Saved: ${ollamaBaseUrl}`;
   }
   showToast('Ollama server updated', 'success');
+}
+
+async function saveOllamaPrompt() {
+  const textarea = document.getElementById('ollamaPrompt');
+  const status = document.getElementById('ollamaPromptStatus');
+  if (!textarea) return;
+
+  const prompt = textarea.value.trim();
+  if (!prompt) {
+    if (status) {
+      status.textContent = 'Prompt cannot be empty';
+      status.style.color = '#dc3545';
+    }
+    return;
+  }
+
+  await chrome.storage.local.set({ ollamaPrompt: prompt });
+  ollamaPrompt = prompt;
+
+  if (status) {
+    status.textContent = 'Prompt saved';
+    status.style.color = '#28a745';
+  }
+  showToast('Analytics prompt updated', 'success');
+  analyticsLoaded = false; // Force refresh on next run
+}
+
+async function resetOllamaPrompt() {
+  const textarea = document.getElementById('ollamaPrompt');
+  const status = document.getElementById('ollamaPromptStatus');
+  if (!textarea) return;
+
+  textarea.value = DEFAULT_OLLAMA_PROMPT;
+  await chrome.storage.local.set({ ollamaPrompt: DEFAULT_OLLAMA_PROMPT });
+  ollamaPrompt = DEFAULT_OLLAMA_PROMPT;
+
+  if (status) {
+    status.textContent = 'Reset to default prompt';
+    status.style.color = '#28a745';
+  }
+  showToast('Prompt reset to default', 'success');
+  analyticsLoaded = false; // Force refresh on next run
 }
 
 // Debounce function for autosave

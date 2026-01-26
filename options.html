@@ -79,6 +79,17 @@
           <button id="saveOllamaServerUrl" class="btn btn-primary">Save Ollama URL</button>
         </div>
         <div id="ollamaServerStatus" style="margin-top: 8px; font-size: 13px;"></div>
+
+        <div style="margin-top: 20px;">
+          <label for="ollamaPrompt" style="display: block; margin-bottom: 8px; font-weight: 500;">Analytics Prompt</label>
+          <p class="help-text" style="margin-top: 0; margin-bottom: 8px;">Customize the prompt sent to Ollama. Use <code>{JOB_LIST_JSON}</code> as a placeholder for the job list data.</p>
+          <textarea id="ollamaPrompt" rows="15" style="width: 100%; font-family: 'Courier New', monospace; font-size: 12px; padding: 10px; border: 1px solid rgba(209, 213, 219, 0.9); border-radius: 8px; resize: vertical;"></textarea>
+          <div style="margin-top: 8px; display: flex; gap: 8px;">
+            <button id="saveOllamaPrompt" class="btn btn-primary">Save Prompt</button>
+            <button id="resetOllamaPrompt" class="btn btn-secondary">Reset to Default</button>
+          </div>
+          <div id="ollamaPromptStatus" style="margin-top: 8px; font-size: 13px;"></div>
+        </div>
       </section>
       
       <section class="section">
