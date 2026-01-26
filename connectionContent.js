@@ -3,7 +3,7 @@
 
 const TARGET_TITLES = [
   'vp of operations',
-  'vice president of operations',
+  'vice president of operations', 
   'director of operations',
   'director of technology',
   'director of infrastructure',
@@ -41,11 +41,35 @@ function randomDelay(min = 1500, max = 4000) {
 }
 
 /**
+ * Simulate a real click on an element
+ */
+function simulateClick(element) {
+  if (!element) return;
+  
+  // Try multiple methods
+  // 1. Native click
+  element.click();
+  
+  // 2. Dispatch mouse events
+  const rect = element.getBoundingClientRect();
+  const x = rect.left + rect.width / 2;
+  const y = rect.top + rect.height / 2;
+  
+  ['mousedown', 'mouseup', 'click'].forEach(type => {
+    element.dispatchEvent(new MouseEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      clientX: x,
+      clientY: y
+    }));
+  });
+}
+
+/**
  * Get all profile cards from the search results
- * Based on actual LinkedIn HTML: div[role="listitem"] inside the main content
  */
 function getProfileCards() {
-  // The profile cards are divs with role="listitem"
   let cards = document.querySelectorAll('div[role="listitem"]');
   
   if (cards.length > 0) {
@@ -53,16 +77,13 @@ function getProfileCards() {
     return Array.from(cards);
   }
   
-  // Fallback: look for containers with profile links
+  // Fallback
   const profileLinks = document.querySelectorAll('a[href*="/in/"][data-view-name="search-result-lockup-title"]');
   if (profileLinks.length > 0) {
-    // Get the parent containers
     const containers = [];
     profileLinks.forEach(link => {
-      // Go up to find a reasonable container
       let container = link.closest('div[role="listitem"]') || 
-                      link.closest('[componentkey]') ||
-                      link.parentElement?.parentElement?.parentElement?.parentElement;
+                      link.closest('[componentkey]');
       if (container && !containers.includes(container)) {
         containers.push(container);
       }
@@ -77,53 +98,37 @@ function getProfileCards() {
 
 /**
  * Find the Connect link/button in a card
- * LinkedIn uses <a> tags with aria-label="Invite X to connect"
  */
 function findConnectButton(card) {
-  // Method 1: Look for <a> with aria-label containing "Invite" and "connect"
+  // Method 1: aria-label containing "Invite" and "connect"
   const connectLinks = card.querySelectorAll('a[aria-label*="Invite"][aria-label*="connect"]');
   if (connectLinks.length > 0) {
-    console.log('[ConnectionOutreach] Found Connect link via aria-label');
     return connectLinks[0];
   }
   
-  // Method 2: Look for <a> with href containing "search-custom-invite"
+  // Method 2: href containing "search-custom-invite"
   const inviteLinks = card.querySelectorAll('a[href*="search-custom-invite"]');
   if (inviteLinks.length > 0) {
-    console.log('[ConnectionOutreach] Found Connect link via href');
     return inviteLinks[0];
   }
   
-  // Method 3: Look for span with "Connect" text and get its parent link/button
+  // Method 3: span with "Connect" text
   const spans = card.querySelectorAll('span');
   for (const span of spans) {
-    const text = span.textContent?.trim().toLowerCase() || '';
-    if (text === 'connect') {
+    const text = span.textContent?.trim();
+    if (text === 'Connect') {
       const parentLink = span.closest('a') || span.closest('button');
       if (parentLink) {
-        console.log('[ConnectionOutreach] Found Connect via span text');
         return parentLink;
       }
     }
   }
   
-  // Method 4: Look for element containing "Connect" text within the card actions area
-  const allLinks = card.querySelectorAll('a');
-  for (const link of allLinks) {
-    const text = link.textContent?.trim().toLowerCase() || '';
-    if (text === 'connect') {
-      console.log('[ConnectionOutreach] Found Connect link via text content');
-      return link;
-    }
-  }
-  
-  // Method 5: Look for buttons as fallback
+  // Method 4: buttons
   const buttons = card.querySelectorAll('button');
   for (const btn of buttons) {
     const text = btn.textContent?.trim().toLowerCase() || '';
-    const ariaLabel = btn.getAttribute('aria-label')?.toLowerCase() || '';
-    if (text === 'connect' || ariaLabel.includes('connect')) {
-      console.log('[ConnectionOutreach] Found Connect button');
+    if (text === 'connect') {
       return btn;
     }
   }
@@ -136,57 +141,34 @@ function findConnectButton(card) {
  */
 function extractProfileData(card) {
   try {
-    // Profile URL - look for link with /in/ in href
     const profileLink = card.querySelector('a[href*="/in/"]');
     const profileUrl = profileLink?.href?.split('?')[0] || '';
     
-    // Name - look for the title link
     const nameLink = card.querySelector('a[data-view-name="search-result-lockup-title"]') ||
                      card.querySelector('a[href*="/in/"]');
     let profileName = nameLink?.textContent?.trim() || 'Unknown';
-    // Clean up the name (remove extra whitespace, degree indicators, etc.)
     profileName = profileName.split('\n')[0].trim().replace(/\s+/g, ' ');
     
-    // Title/headline - usually in a paragraph after the name
-    // Look for the primary subtitle or job title paragraph
     let title = '';
     const paragraphs = card.querySelectorAll('p');
     for (const p of paragraphs) {
       const text = p.textContent?.trim() || '';
-      // Skip very short text, name duplicates, and location-only text
       if (text.length > 10 && 
           !text.includes(profileName) && 
           !text.startsWith('Past:') &&
           !text.includes('mutual connection')) {
-        // This is likely the job title
         title = text;
         break;
       }
     }
     
-    // Alternative: look for specific class patterns
-    if (!title) {
-      const subtitleEl = card.querySelector('.entity-result__primary-subtitle') ||
-                         card.querySelector('p._02249ad5');
-      if (subtitleEl) {
-        title = subtitleEl.textContent?.trim() || '';
-      }
-    }
-    
-    // Find connect button/link
     const connectButton = findConnectButton(card);
     
-    // Check connection status
     const cardText = card.textContent?.toLowerCase() || '';
     const isPending = cardText.includes('pending');
     const isConnected = cardText.includes('1st degree') || cardText.includes('• 1st');
-    const isFollowing = cardText.includes('following');
     
-    // Check if there's already a "Message" button instead of Connect (means already connected)
-    const hasMessageBtn = card.querySelector('a[href*="/messaging/"]') || 
-                          card.textContent?.toLowerCase().includes('message');
-    
-    console.log(`[ConnectionOutreach] Profile: "${profileName}", Title: "${title.substring(0, 50)}...", HasConnect: ${!!connectButton}, Connected: ${isConnected}`);
+    console.log(`[ConnectionOutreach] Profile: "${profileName}", HasConnect: ${!!connectButton}, Connected: ${isConnected}`);
     
     return {
       profileUrl,
@@ -195,246 +177,147 @@ function extractProfileData(card) {
       company: '',
       connectButton,
       isPending,
-      isConnected: isConnected || hasMessageBtn,
-      isFollowing,
+      isConnected,
       cardElement: card
     };
   } catch (error) {
-    console.error('[ConnectionOutreach] Error extracting profile data:', error);
+    console.error('[ConnectionOutreach] Error extracting profile:', error);
     return null;
   }
 }
 
 /**
- * Click the Connect link/button and handle the modal
+ * Wait for modal to appear and find the "Send without a note" button
+ */
+async function handleConnectionModal() {
+  console.log('[ConnectionOutreach] Waiting for modal...');
+  
+  // Wait for modal to appear
+  let modal = null;
+  for (let i = 0; i < 10; i++) {
+    await randomDelay(300, 500);
+    
+    // Try various modal selectors
+    modal = document.querySelector('.artdeco-modal') ||
+            document.querySelector('[role="dialog"]') ||
+            document.querySelector('.send-invite') ||
+            document.querySelector('[data-test-modal]');
+    
+    if (modal && modal.offsetParent !== null) { // Check if visible
+      console.log('[ConnectionOutreach] Modal found!');
+      break;
+    }
+  }
+  
+  if (!modal) {
+    console.log('[ConnectionOutreach] No modal found after waiting');
+    return { success: false, reason: 'No modal appeared' };
+  }
+  
+  // Wait a bit for modal content to load
+  await randomDelay(500, 800);
+  
+  // Debug: Log all buttons in modal
+  const allButtons = modal.querySelectorAll('button');
+  console.log(`[ConnectionOutreach] Modal has ${allButtons.length} buttons:`);
+  allButtons.forEach((btn, i) => {
+    console.log(`[ConnectionOutreach]   Button ${i}: "${btn.textContent?.trim()}" class="${btn.className}"`);
+  });
+  
+  // Find "Send without a note" button - check ALL buttons on page (modal might be in different container)
+  const allPageButtons = document.querySelectorAll('button');
+  
+  for (const btn of allPageButtons) {
+    const text = btn.textContent?.trim() || '';
+    const textLower = text.toLowerCase();
+    
+    // Look for "Send without a note" specifically
+    if (textLower.includes('without') && textLower.includes('note')) {
+      console.log(`[ConnectionOutreach] Found "Send without a note" button: "${text}"`);
+      await randomDelay(300, 500);
+      simulateClick(btn);
+      await randomDelay(800, 1200);
+      return { success: true, reason: 'Clicked "Send without a note"' };
+    }
+  }
+  
+  // Fallback: look for any "Send" button (not "Add a note")
+  for (const btn of allPageButtons) {
+    const text = btn.textContent?.trim() || '';
+    const textLower = text.toLowerCase();
+    
+    if (textLower === 'send' || (textLower.startsWith('send') && !textLower.includes('add'))) {
+      console.log(`[ConnectionOutreach] Found Send button: "${text}"`);
+      await randomDelay(300, 500);
+      simulateClick(btn);
+      await randomDelay(800, 1200);
+      return { success: true, reason: 'Clicked Send button' };
+    }
+  }
+  
+  // Try to close modal if we couldn't send
+  const closeBtn = document.querySelector('button[aria-label="Dismiss"]') ||
+                   document.querySelector('.artdeco-modal__dismiss');
+  if (closeBtn) {
+    closeBtn.click();
+    await randomDelay(300, 500);
+  }
+  
+  return { success: false, reason: 'Could not find Send button in modal' };
+}
+
+/**
+ * Send connection request to a profile
  */
 async function sendConnectionRequest(connectElement, profileName) {
   try {
-    console.log(`[ConnectionOutreach] Attempting to connect with ${profileName}...`);
+    console.log(`[ConnectionOutreach] ===== Connecting with ${profileName} =====`);
     
-    // Scroll element into view
+    // Scroll into view
     connectElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    await randomDelay(500, 1000);
-    
-    // Check if it's a link that might navigate away
-    const isLink = connectElement.tagName === 'A';
-    const href = connectElement.getAttribute('href');
-    console.log(`[ConnectionOutreach] Connect element: ${connectElement.tagName}, href: ${href}`);
-    
-    // Store current URL to detect navigation
-    const currentUrl = window.location.href;
-    
-    // Try multiple click methods
-    // Method 1: Direct click
-    console.log('[ConnectionOutreach] Trying direct click...');
-    connectElement.click();
     await randomDelay(500, 800);
     
-    // Check if we navigated away
-    if (window.location.href !== currentUrl) {
-      console.log('[ConnectionOutreach] Page navigated, waiting for invite page...');
-      await randomDelay(2000, 3000);
-      
-      // We're on the invite page - look for Send button there
-      const sendBtnOnPage = document.querySelector('button[aria-label*="Send"]') ||
-                           document.querySelector('button.artdeco-button--primary');
-      if (sendBtnOnPage) {
-        const btnText = sendBtnOnPage.textContent?.trim().toLowerCase() || '';
-        if (btnText.includes('send') && !btnText.includes('add')) {
-          console.log('[ConnectionOutreach] Found Send button on invite page, clicking...');
-          sendBtnOnPage.click();
-          await randomDelay(1000, 1500);
-          
-          // Go back to search results
-          window.history.back();
-          await randomDelay(2000, 3000);
-          
-          return { success: true, reason: 'Invite sent via invite page' };
-        }
-      }
-      
-      // Go back and report failure
-      window.history.back();
-      await randomDelay(1500, 2000);
-      return { success: false, reason: 'Navigated to invite page but could not complete' };
+    // Click the connect button/link
+    console.log('[ConnectionOutreach] Clicking Connect...');
+    simulateClick(connectElement);
+    
+    // Wait and handle modal
+    await randomDelay(1500, 2500);
+    
+    // Check if modal appeared
+    const result = await handleConnectionModal();
+    
+    if (result.success) {
+      console.log(`[ConnectionOutreach] SUCCESS: ${result.reason}`);
+      return result;
     }
     
-    // Method 2: If no navigation, try MouseEvent dispatch
-    if (!document.querySelector('.artdeco-modal') && !document.querySelector('[role="dialog"]')) {
-      console.log('[ConnectionOutreach] No modal yet, trying MouseEvent...');
-      const clickEvent = new MouseEvent('click', {
-        bubbles: true,
-        cancelable: true,
-        view: window,
-        button: 0
-      });
-      connectElement.dispatchEvent(clickEvent);
-      await randomDelay(500, 800);
+    // Check for success indicators even if modal handling failed
+    const toast = document.querySelector('.artdeco-toast-item--visible');
+    if (toast?.textContent?.toLowerCase().includes('sent')) {
+      return { success: true, reason: 'Invite sent (toast confirmed)' };
     }
     
-    // Method 3: Try pointer events
-    if (!document.querySelector('.artdeco-modal') && !document.querySelector('[role="dialog"]')) {
-      console.log('[ConnectionOutreach] No modal yet, trying pointer events...');
-      connectElement.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
-      connectElement.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
-      await randomDelay(500, 800);
-    }
-    
-    // Wait for modal to appear
-    console.log('[ConnectionOutreach] Waiting for modal...');
-    await randomDelay(2000, 3000);
-    
-    // Look for the modal that appears - try multiple times
-    let modal = null;
-    for (let attempt = 0; attempt < 3; attempt++) {
-      modal = document.querySelector('.artdeco-modal') ||
-              document.querySelector('[role="dialog"]') ||
-              document.querySelector('.send-invite') ||
-              document.querySelector('[data-test-modal]') ||
-              document.querySelector('.artdeco-modal-overlay');
-      
-      if (modal) {
-        console.log(`[ConnectionOutreach] Modal found on attempt ${attempt + 1}`);
-        break;
-      }
-      
-      await randomDelay(800, 1200);
-    }
-    
-    if (!modal) {
-      // Check if invite was sent directly (look for success toast)
-      console.log('[ConnectionOutreach] No modal appeared, checking for success indicators...');
-      
-      const successToast = document.querySelector('.artdeco-toast-item--visible');
-      if (successToast?.textContent?.toLowerCase().includes('sent') ||
-          successToast?.textContent?.toLowerCase().includes('invitation')) {
-        return { success: true, reason: 'Direct invite sent (toast confirmed)' };
-      }
-      
-      // Check if the Connect button changed (e.g., to "Pending")
-      const cardText = connectElement.closest('[role="listitem"]')?.textContent?.toLowerCase() || '';
-      if (cardText.includes('pending')) {
-        return { success: true, reason: 'Invite sent (status changed to pending)' };
-      }
-      
-      // No modal and no confirmation - likely failed
-      console.log('[ConnectionOutreach] No modal and no success confirmation');
-      return { success: false, reason: 'No modal appeared - connection may not have been sent' };
-    }
-    
-    console.log('[ConnectionOutreach] Modal appeared, looking for Send without a note button...');
-    
-    // Log all buttons in modal for debugging
-    const allModalButtons = modal.querySelectorAll('button');
-    console.log(`[ConnectionOutreach] Found ${allModalButtons.length} buttons in modal`);
-    
-    // First, specifically look for "Send without a note" button
-    for (const btn of allModalButtons) {
-      const text = btn.textContent?.trim() || '';
-      const textLower = text.toLowerCase();
-      const ariaLabel = btn.getAttribute('aria-label')?.toLowerCase() || '';
-      
-      console.log(`[ConnectionOutreach] Modal button: "${text}"`);
-      
-      // Specifically match "Send without a note"
-      if (textLower.includes('send without') || textLower === 'send without a note') {
-        console.log('[ConnectionOutreach] Found "Send without a note" button, clicking...');
-        btn.click();
-        await randomDelay(1000, 1500);
-        return { success: true, reason: 'Invite sent (without note)' };
-      }
-    }
-    
-    // Second pass: look for any "Send" button that's not "Add a note"
-    for (const btn of allModalButtons) {
-      const text = btn.textContent?.trim().toLowerCase() || '';
-      const ariaLabel = btn.getAttribute('aria-label')?.toLowerCase() || '';
-      
-      // Skip "Add a note" button
-      if (text.includes('add') || ariaLabel.includes('add')) {
-        continue;
-      }
-      
-      // Match various "Send" patterns
-      if (text === 'send' || text === 'send now' || text.startsWith('send')) {
-        console.log('[ConnectionOutreach] Found Send button, clicking...');
-        btn.click();
-        await randomDelay(1000, 1500);
-        return { success: true, reason: 'Invite sent via modal' };
-      }
-    }
-    
-    // Third: Try secondary/tertiary button (often "Send without a note" is styled differently)
-    const secondaryBtn = modal.querySelector('button.artdeco-button--secondary') ||
-                         modal.querySelector('button.artdeco-button--tertiary') ||
-                         modal.querySelector('button.artdeco-button--muted');
-    if (secondaryBtn) {
-      const text = secondaryBtn.textContent?.trim().toLowerCase() || '';
-      console.log(`[ConnectionOutreach] Secondary button text: "${text}"`);
-      if (text.includes('send') && !text.includes('add')) {
-        console.log('[ConnectionOutreach] Clicking secondary Send button...');
-        secondaryBtn.click();
-        await randomDelay(1000, 1500);
-        return { success: true, reason: 'Invite sent via secondary button' };
-      }
-    }
-    
-    // Fourth: Try primary button as last resort
-    const primaryBtn = modal.querySelector('button.artdeco-button--primary');
-    if (primaryBtn) {
-      const text = primaryBtn.textContent?.trim().toLowerCase() || '';
-      console.log(`[ConnectionOutreach] Primary button text: "${text}"`);
-      // Only click if it's actually a send button
-      if (text.includes('send') && !text.includes('add')) {
-        primaryBtn.click();
-        await randomDelay(1000, 1500);
-        return { success: true, reason: 'Invite sent via primary button' };
-      }
-    }
-    
-    // Close modal if we couldn't send
-    console.log('[ConnectionOutreach] Could not find Send button, closing modal');
-    const closeBtn = modal.querySelector('button[aria-label="Dismiss"]') ||
-                     modal.querySelector('button.artdeco-modal__dismiss') ||
-                     modal.querySelector('[data-test-modal-close-btn]') ||
-                     modal.querySelector('button[aria-label="Cancel"]');
-    if (closeBtn) {
-      closeBtn.click();
-      await randomDelay(300, 600);
-    } else {
-      // Try pressing Escape
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27 }));
-      await randomDelay(300, 600);
-    }
-    
-    return { success: false, reason: 'Could not find Send button in modal' };
+    console.log(`[ConnectionOutreach] FAILED: ${result.reason}`);
+    return result;
     
   } catch (error) {
-    console.error('[ConnectionOutreach] Error sending request:', error);
+    console.error('[ConnectionOutreach] Error:', error);
     return { success: false, reason: error.message };
   }
 }
 
 /**
- * Check for LinkedIn rate limit warnings
+ * Check for rate limits
  */
 function detectRateLimit() {
   const pageText = document.body?.textContent?.toLowerCase() || '';
-  const warningIndicators = [
-    'you\'ve reached the weekly invitation limit',
-    'too many pending invitations',
-    'invitation limit',
-    'slow down',
-    'unusual activity',
-    'verify your identity',
-    'security check'
-  ];
-  
-  return warningIndicators.some(indicator => pageText.includes(indicator));
+  const warnings = ['weekly invitation limit', 'too many pending', 'slow down', 'unusual activity'];
+  return warnings.some(w => pageText.includes(w));
 }
 
 /**
- * Shuffle array randomly
+ * Shuffle array
  */
 function shuffleArray(array) {
   const shuffled = [...array];
@@ -446,98 +329,55 @@ function shuffleArray(array) {
 }
 
 /**
- * Main function to process profiles on the page
+ * Main processing function
  */
 async function processOutreachPage(options = {}) {
   const { maxInvites = 5, sentProfileUrls = [] } = options;
   const results = [];
   
   console.log('[ConnectionOutreach] ========================================');
-  console.log('[ConnectionOutreach] Starting page processing');
+  console.log('[ConnectionOutreach] Processing page');
   console.log('[ConnectionOutreach] Max invites:', maxInvites);
-  console.log('[ConnectionOutreach] Already sent to:', sentProfileUrls.length, 'profiles');
   
-  // Check for rate limits first
   if (detectRateLimit()) {
-    console.warn('[ConnectionOutreach] Rate limit detected!');
-    return {
-      success: false,
-      error: 'RATE_LIMIT',
-      message: 'LinkedIn rate limit or warning detected',
-      results: []
-    };
+    return { success: false, error: 'RATE_LIMIT', message: 'Rate limit detected', results: [] };
   }
   
-  // Get profile cards
   const cards = getProfileCards();
-  console.log(`[ConnectionOutreach] Found ${cards.length} total profile cards`);
+  console.log(`[ConnectionOutreach] Found ${cards.length} profile cards`);
   
   if (cards.length === 0) {
-    // Debug: log the page structure
-    console.log('[ConnectionOutreach] DEBUG: Page HTML sample:', document.body?.innerHTML?.substring(0, 2000));
-    return {
-      success: true,
-      sentCount: 0,
-      results: [{
-        profileUrl: '',
-        profileName: 'SYSTEM',
-        title: '',
-        company: '',
-        outcome: 'error',
-        reason: 'No profile cards found on page - check console for debug info'
-      }]
-    };
+    return { success: true, sentCount: 0, results: [{ outcome: 'error', reason: 'No profiles found' }] };
   }
   
-  // Shuffle for randomization
   const shuffledCards = shuffleArray(cards);
-  
   let sentCount = 0;
   const sentUrls = new Set(sentProfileUrls.map(url => url.toLowerCase()));
-  let processedCount = 0;
   
   for (const card of shuffledCards) {
     if (sentCount >= maxInvites) {
-      console.log('[ConnectionOutreach] Reached max invites for this run');
+      console.log('[ConnectionOutreach] Reached max invites for this page');
       break;
     }
     
-    processedCount++;
-    
-    // Check rate limit periodically
-    if (processedCount % 5 === 0 && detectRateLimit()) {
-      console.warn('[ConnectionOutreach] Rate limit detected mid-processing!');
-      return {
-        success: false,
-        error: 'RATE_LIMIT',
-        message: 'LinkedIn rate limit detected',
-        results
-      };
-    }
-    
     const profile = extractProfileData(card);
-    if (!profile) {
-      console.log('[ConnectionOutreach] Could not extract profile data from card');
-      continue;
-    }
+    if (!profile) continue;
     
     const logEntry = {
       profileUrl: profile.profileUrl,
       profileName: profile.profileName,
       title: profile.title,
-      company: profile.company,
       timestamp: Date.now()
     };
     
-    // Skip if already sent
+    // Skip checks
     if (profile.profileUrl && sentUrls.has(profile.profileUrl.toLowerCase())) {
       logEntry.outcome = 'skipped';
-      logEntry.reason = 'Already sent invite';
+      logEntry.reason = 'Already sent';
       results.push(logEntry);
       continue;
     }
     
-    // Skip if connected or pending
     if (profile.isConnected) {
       logEntry.outcome = 'skipped';
       logEntry.reason = 'Already connected';
@@ -547,33 +387,20 @@ async function processOutreachPage(options = {}) {
     
     if (profile.isPending) {
       logEntry.outcome = 'skipped';
-      logEntry.reason = 'Pending invitation';
+      logEntry.reason = 'Pending';
       results.push(logEntry);
       continue;
     }
     
-    // Skip if no connect button
     if (!profile.connectButton) {
       logEntry.outcome = 'skipped';
-      logEntry.reason = 'No connect button found';
+      logEntry.reason = 'No connect button';
       results.push(logEntry);
       continue;
     }
     
-    // For now, we're not filtering by title to test the connection flow
-    // Uncomment this to enable title filtering:
-    // if (!matchesTargetTitle(profile.title)) {
-    //   logEntry.outcome = 'skipped';
-    //   logEntry.reason = 'Title does not match targets';
-    //   results.push(logEntry);
-    //   continue;
-    // }
-    
-    // Add random delay before action
-    console.log(`[ConnectionOutreach] Will connect with: ${profile.profileName}`);
-    await randomDelay(2000, 4000);
-    
-    // Try to send connection request
+    // Send connection request
+    await randomDelay(1500, 3000);
     const sendResult = await sendConnectionRequest(profile.connectButton, profile.profileName);
     
     if (sendResult.success) {
@@ -583,60 +410,48 @@ async function processOutreachPage(options = {}) {
       if (profile.profileUrl) {
         sentUrls.add(profile.profileUrl.toLowerCase());
       }
-      console.log(`[ConnectionOutreach] SUCCESS: ${profile.profileName} - ${sendResult.reason}`);
     } else {
       logEntry.outcome = 'error';
       logEntry.reason = sendResult.reason;
-      console.warn(`[ConnectionOutreach] FAILED: ${profile.profileName} - ${sendResult.reason}`);
     }
     
     results.push(logEntry);
     
-    // Random delay between invites
-    await randomDelay(3000, 6000);
+    // Delay between profiles
+    await randomDelay(2000, 4000);
   }
   
   console.log('[ConnectionOutreach] ========================================');
-  console.log('[ConnectionOutreach] Processing complete');
-  console.log('[ConnectionOutreach] Sent:', sentCount);
-  console.log('[ConnectionOutreach] Total results:', results.length);
+  console.log('[ConnectionOutreach] Page complete. Sent:', sentCount);
   
-  return {
-    success: true,
-    sentCount,
-    results
-  };
+  return { success: true, sentCount, results };
 }
 
 /**
- * Scroll to load more results
+ * Scroll page to load content
  */
 async function scrollToLoadMore() {
-  console.log('[ConnectionOutreach] Scrolling to load more results...');
-  const scrollHeight = document.documentElement.scrollHeight;
+  console.log('[ConnectionOutreach] Scrolling...');
   const viewportHeight = window.innerHeight;
   let currentScroll = 0;
   
-  while (currentScroll < scrollHeight - viewportHeight) {
-    currentScroll += viewportHeight * 0.8;
+  for (let i = 0; i < 3; i++) {
+    currentScroll += viewportHeight * 0.7;
     window.scrollTo({ top: currentScroll, behavior: 'smooth' });
-    await randomDelay(800, 1500);
+    await randomDelay(600, 1000);
   }
   
-  // Scroll back to top
   window.scrollTo({ top: 0, behavior: 'smooth' });
-  await randomDelay(500, 1000);
-  console.log('[ConnectionOutreach] Scrolling complete');
+  await randomDelay(500, 800);
 }
 
-// Listen for messages from background script
+// Message listener
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  console.log('[ConnectionOutreach] Received message:', message.action);
+  console.log('[ConnectionOutreach] Message received:', message.action);
   
   if (message.action === 'processOutreach') {
     (async () => {
       try {
-        // Optionally scroll to load more results
         if (message.scrollFirst) {
           await scrollToLoadMore();
         }
@@ -646,62 +461,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           sentProfileUrls: message.sentProfileUrls || []
         });
         
-        console.log('[ConnectionOutreach] Sending response:', JSON.stringify(result).substring(0, 500));
         sendResponse(result);
       } catch (error) {
         console.error('[ConnectionOutreach] Error:', error);
-        sendResponse({
-          success: false,
-          error: 'SCRIPT_ERROR',
-          message: error.message,
-          results: []
-        });
+        sendResponse({ success: false, error: 'SCRIPT_ERROR', message: error.message, results: [] });
       }
     })();
     
-    return true; // Keep channel open for async response
+    return true;
   }
   
   if (message.action === 'checkOutreachPage') {
     const cards = getProfileCards();
-    sendResponse({
-      isValidPage: cards.length > 0,
-      profileCount: cards.length
-    });
+    sendResponse({ isValidPage: cards.length > 0, profileCount: cards.length });
     return true;
   }
 });
 
-// Log when script loads and do initial diagnostics
-console.log('[ConnectionOutreach] ========================================');
-console.log('[ConnectionOutreach] Content script loaded');
-console.log('[ConnectionOutreach] URL:', window.location.href);
+// Initial log
+console.log('[ConnectionOutreach] Content script loaded on:', window.location.href);
 
-// Run diagnostics after page settles
+// Diagnostic after page loads
 setTimeout(() => {
-  console.log('[ConnectionOutreach] Running initial diagnostics...');
   const cards = getProfileCards();
-  console.log('[ConnectionOutreach] Initial card count:', cards.length);
-  
-  if (cards.length > 0) {
-    console.log('[ConnectionOutreach] First card sample:');
-    const firstProfile = extractProfileData(cards[0]);
-    if (firstProfile) {
-      console.log('[ConnectionOutreach] - Name:', firstProfile.profileName);
-      console.log('[ConnectionOutreach] - Title:', firstProfile.title);
-      console.log('[ConnectionOutreach] - URL:', firstProfile.profileUrl);
-      console.log('[ConnectionOutreach] - Has Connect:', !!firstProfile.connectButton);
-    }
-  } else {
-    // Log some debug info about the page structure
-    const listItems = document.querySelectorAll('[role="listitem"]');
-    console.log('[ConnectionOutreach] Found [role="listitem"] elements:', listItems.length);
-    
-    const profileLinks = document.querySelectorAll('a[href*="/in/"]');
-    console.log('[ConnectionOutreach] Found profile links (a[href*="/in/"]):', profileLinks.length);
-    
-    const connectElements = document.querySelectorAll('a[aria-label*="connect"], button[aria-label*="connect"]');
-    console.log('[ConnectionOutreach] Found connect elements:', connectElements.length);
-  }
-  console.log('[ConnectionOutreach] ========================================');
-}, 3000);
+  console.log('[ConnectionOutreach] Initial diagnostics - Cards found:', cards.length);
+}, 2000);

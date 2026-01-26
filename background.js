@@ -1309,7 +1309,8 @@ updateBadge();
 
 const OUTREACH_CONFIG = {
   MAX_WEEKLY_INVITES: 100,
-  MAX_INVITES_PER_RUN: 5,
+  MAX_INVITES_PER_RUN: 25, // Allow up to 25 invites per run (5 pages x ~5 per page)
+  MAX_INVITES_PER_PAGE: 5, // Max invites to send on each page
   BUSINESS_HOURS_START: 9,
   BUSINESS_HOURS_END: 18,
   MIN_DELAY_BETWEEN_RUNS_MS: 30 * 60 * 1000, // 30 minutes minimum
@@ -1564,15 +1565,17 @@ async function performOutreachRun(forceRun = false) {
       // Send message to content script
       let result = null;
       let retries = 3;
-      const invitesRemaining = maxInvites - totalSentCount;
+      // Limit invites per page, but also respect overall remaining
+      const overallRemaining = maxInvites - totalSentCount;
+      const invitesForThisPage = Math.min(OUTREACH_CONFIG.MAX_INVITES_PER_PAGE, overallRemaining);
       
-      console.log(`[Outreach] Processing page ${pageNum}, invites remaining: ${invitesRemaining}`);
+      console.log(`[Outreach] Processing page ${pageNum}, invites for this page: ${invitesForThisPage}, overall remaining: ${overallRemaining}`);
       
       while (retries > 0 && !result) {
         try {
           result = await chrome.tabs.sendMessage(tab.id, {
             action: 'processOutreach',
-            maxInvites: invitesRemaining,
+            maxInvites: invitesForThisPage,
             sentProfileUrls: updatedSentProfiles,
             scrollFirst: true
           });
@@ -1617,13 +1620,14 @@ async function performOutreachRun(forceRun = false) {
       
       console.log(`[Outreach] Page ${pageNum} complete: sent ${pageSentCount}, total sent: ${totalSentCount}`);
       
-      // If we've sent enough or no more to send on this page, we might stop
+      // Only stop if we've reached the overall max invites for this run
       if (totalSentCount >= maxInvites) {
-        console.log('[Outreach] Reached max invites');
+        console.log('[Outreach] Reached max invites for this run');
         break;
       }
       
-      // Navigate to next page if not the last page
+      // Always try to navigate to next page (unless it's the last page)
+      // Continue even if no invites were sent on this page (profiles might not match, already connected, etc.)
       if (pageNum < MAX_PAGES) {
         console.log('[Outreach] Navigating to next page...');
         
