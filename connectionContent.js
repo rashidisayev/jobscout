@@ -94,7 +94,20 @@ function findConnectButton(card) {
     return inviteLinks[0];
   }
   
-  // Method 3: Look for element containing "Connect" text within the card actions area
+  // Method 3: Look for span with "Connect" text and get its parent link/button
+  const spans = card.querySelectorAll('span');
+  for (const span of spans) {
+    const text = span.textContent?.trim().toLowerCase() || '';
+    if (text === 'connect') {
+      const parentLink = span.closest('a') || span.closest('button');
+      if (parentLink) {
+        console.log('[ConnectionOutreach] Found Connect via span text');
+        return parentLink;
+      }
+    }
+  }
+  
+  // Method 4: Look for element containing "Connect" text within the card actions area
   const allLinks = card.querySelectorAll('a');
   for (const link of allLinks) {
     const text = link.textContent?.trim().toLowerCase() || '';
@@ -104,7 +117,7 @@ function findConnectButton(card) {
     }
   }
   
-  // Method 4: Look for buttons as fallback
+  // Method 5: Look for buttons as fallback
   const buttons = card.querySelectorAll('button');
   for (const btn of buttons) {
     const text = btn.textContent?.trim().toLowerCase() || '';
@@ -203,35 +216,110 @@ async function sendConnectionRequest(connectElement, profileName) {
     connectElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
     await randomDelay(500, 1000);
     
-    // Click the Connect link/button
-    console.log('[ConnectionOutreach] Clicking Connect element...');
+    // Check if it's a link that might navigate away
+    const isLink = connectElement.tagName === 'A';
+    const href = connectElement.getAttribute('href');
+    console.log(`[ConnectionOutreach] Connect element: ${connectElement.tagName}, href: ${href}`);
+    
+    // Store current URL to detect navigation
+    const currentUrl = window.location.href;
+    
+    // Try multiple click methods
+    // Method 1: Direct click
+    console.log('[ConnectionOutreach] Trying direct click...');
     connectElement.click();
-    await randomDelay(1500, 2500);
+    await randomDelay(500, 800);
     
-    // Look for the modal that appears
-    let modal = document.querySelector('.artdeco-modal') ||
-                document.querySelector('[role="dialog"]') ||
-                document.querySelector('.send-invite') ||
-                document.querySelector('[data-test-modal]');
+    // Check if we navigated away
+    if (window.location.href !== currentUrl) {
+      console.log('[ConnectionOutreach] Page navigated, waiting for invite page...');
+      await randomDelay(2000, 3000);
+      
+      // We're on the invite page - look for Send button there
+      const sendBtnOnPage = document.querySelector('button[aria-label*="Send"]') ||
+                           document.querySelector('button.artdeco-button--primary');
+      if (sendBtnOnPage) {
+        const btnText = sendBtnOnPage.textContent?.trim().toLowerCase() || '';
+        if (btnText.includes('send') && !btnText.includes('add')) {
+          console.log('[ConnectionOutreach] Found Send button on invite page, clicking...');
+          sendBtnOnPage.click();
+          await randomDelay(1000, 1500);
+          
+          // Go back to search results
+          window.history.back();
+          await randomDelay(2000, 3000);
+          
+          return { success: true, reason: 'Invite sent via invite page' };
+        }
+      }
+      
+      // Go back and report failure
+      window.history.back();
+      await randomDelay(1500, 2000);
+      return { success: false, reason: 'Navigated to invite page but could not complete' };
+    }
     
-    // Wait a bit more if no modal
-    if (!modal) {
-      await randomDelay(1000, 1500);
+    // Method 2: If no navigation, try MouseEvent dispatch
+    if (!document.querySelector('.artdeco-modal') && !document.querySelector('[role="dialog"]')) {
+      console.log('[ConnectionOutreach] No modal yet, trying MouseEvent...');
+      const clickEvent = new MouseEvent('click', {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+        button: 0
+      });
+      connectElement.dispatchEvent(clickEvent);
+      await randomDelay(500, 800);
+    }
+    
+    // Method 3: Try pointer events
+    if (!document.querySelector('.artdeco-modal') && !document.querySelector('[role="dialog"]')) {
+      console.log('[ConnectionOutreach] No modal yet, trying pointer events...');
+      connectElement.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+      connectElement.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+      await randomDelay(500, 800);
+    }
+    
+    // Wait for modal to appear
+    console.log('[ConnectionOutreach] Waiting for modal...');
+    await randomDelay(2000, 3000);
+    
+    // Look for the modal that appears - try multiple times
+    let modal = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
       modal = document.querySelector('.artdeco-modal') ||
-              document.querySelector('[role="dialog"]');
+              document.querySelector('[role="dialog"]') ||
+              document.querySelector('.send-invite') ||
+              document.querySelector('[data-test-modal]') ||
+              document.querySelector('.artdeco-modal-overlay');
+      
+      if (modal) {
+        console.log(`[ConnectionOutreach] Modal found on attempt ${attempt + 1}`);
+        break;
+      }
+      
+      await randomDelay(800, 1200);
     }
     
     if (!modal) {
-      // Check if invite was sent directly (some profiles allow this)
-      console.log('[ConnectionOutreach] No modal appeared - checking if direct invite was sent');
+      // Check if invite was sent directly (look for success toast)
+      console.log('[ConnectionOutreach] No modal appeared, checking for success indicators...');
       
-      // Look for success message or toast
       const successToast = document.querySelector('.artdeco-toast-item--visible');
-      if (successToast?.textContent?.toLowerCase().includes('sent')) {
-        return { success: true, reason: 'Direct invite sent (no modal)' };
+      if (successToast?.textContent?.toLowerCase().includes('sent') ||
+          successToast?.textContent?.toLowerCase().includes('invitation')) {
+        return { success: true, reason: 'Direct invite sent (toast confirmed)' };
       }
       
-      return { success: true, reason: 'Direct connect attempted (no modal verification)' };
+      // Check if the Connect button changed (e.g., to "Pending")
+      const cardText = connectElement.closest('[role="listitem"]')?.textContent?.toLowerCase() || '';
+      if (cardText.includes('pending')) {
+        return { success: true, reason: 'Invite sent (status changed to pending)' };
+      }
+      
+      // No modal and no confirmation - likely failed
+      console.log('[ConnectionOutreach] No modal and no success confirmation');
+      return { success: false, reason: 'No modal appeared - connection may not have been sent' };
     }
     
     console.log('[ConnectionOutreach] Modal appeared, looking for Send without a note button...');
