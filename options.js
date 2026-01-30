@@ -1106,8 +1106,13 @@ async function addSearchUrl() {
     return;
   }
   
-  if (!url.startsWith('https://www.linkedin.com/jobs/')) {
-    alert('Please enter a valid LinkedIn Jobs URL');
+  // Validate URL - accept LinkedIn Jobs or Agentur für Arbeit
+  const isValidJobUrl = 
+    url.startsWith('https://www.linkedin.com/jobs/') ||
+    url.includes('arbeitsagentur.de/jobsuche');
+  
+  if (!isValidJobUrl) {
+    alert('Please enter a valid job search URL from:\n- LinkedIn (linkedin.com/jobs/...)\n- Agentur für Arbeit (arbeitsagentur.de/jobsuche/...)');
     return;
   }
   
