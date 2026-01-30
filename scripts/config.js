@@ -9,7 +9,7 @@ export const MIN_SCORE_THRESHOLD = 0.05; // 5%
 /**
  * Maximum number of search URLs allowed
  */
-export const MAX_SEARCH_URLS = 10;
+export const MAX_SEARCH_URLS = 20;
 
 /**
  * Maximum number of pages to scan per search URL
