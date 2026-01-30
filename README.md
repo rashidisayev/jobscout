@@ -4,8 +4,9 @@ JobScout is a Chrome Extension (Manifest V3) that helps you monitor LinkedIn Job
 
 ## Features
 
-- **Hourly Scanning**: Automatically scans LinkedIn job searches at configurable intervals
-- **Multiple Search URLs**: Add 3-10 LinkedIn job search URLs to monitor with optional location and keyword labels
+- **Hourly Scanning**: Automatically scans job searches at configurable intervals
+- **Multiple Job Portals**: Supports LinkedIn and Agentur für Arbeit (German Federal Employment Agency)
+- **Multiple Search URLs**: Add 3-10 job search URLs from supported portals to monitor with optional location and keyword labels
 - **Resume Matching**: Upload up to 5 resumes and get automatic matching scores for each job
 - **NLP-Based Scoring**: Uses TF-IDF and cosine similarity to match job descriptions with resumes
 - **Local Storage**: All data stored locally in your browser - no external servers
@@ -47,7 +48,9 @@ You can create these using any image editor, or use online tools like [Favicon G
 1. **Right-click the JobScout extension icon** and select **Options** (or click the extension icon and then "Open Options")
 
 2. **Add Search URLs**:
-   - Go to LinkedIn Jobs and perform a search
+   - Go to a supported job portal and perform a search:
+     - **LinkedIn Jobs**: `https://www.linkedin.com/jobs/search/?keywords=...`
+     - **Agentur für Arbeit**: `https://www.arbeitsagentur.de/jobsuche/suche?was=...`
    - Copy the URL from your browser's address bar
    - Paste it into the "Search URLs" tab in JobScout options
    - (Optional) Add a location label to help identify this search
@@ -55,6 +58,7 @@ You can create these using any image editor, or use online tools like [Favicon G
    - Click "Add URL"
    - Location and keyword fields auto-save as you type
    - Repeat for up to 10 different searches
+   - Jobs from different portals are clearly labeled with their source
 
 3. **Upload Resumes**:
    - Go to the "Resumes" tab
@@ -81,8 +85,21 @@ You can create these using any image editor, or use online tools like [Favicon G
 - **View Results**: 
   - Go to Options → Results tab
   - Filter and sort jobs by date, score, or company
-  - Click "View" to open job listings in LinkedIn
+  - Click "View" to open job listings
   - See which resume matches best and the similarity score
+  - Each job shows its source (LinkedIn, Agentur für Arbeit, etc.) as a colored badge
+
+### Supported Job Portals
+
+| Portal | URL Pattern | Badge Color |
+|--------|-------------|-------------|
+| LinkedIn | `linkedin.com/jobs/*` | Blue |
+| Agentur für Arbeit | `arbeitsagentur.de/jobsuche/*` | Pink |
+
+**Agentur für Arbeit (German Federal Employment Agency)**:
+- Add search URLs like: `https://www.arbeitsagentur.de/jobsuche/suche?angebotsart=1&was=data%20center`
+- Jobs are scraped with: title, company, location, posting date, and direct link
+- All jobs from this portal are clearly marked with "Agentur für Arbeit" badge
 
 - **Export Data**: Click "Export CSV" in the Results tab to download all jobs as a CSV file
 
@@ -304,21 +321,22 @@ All parsing, embeddings, and scoring happen **locally in your browser**. No exte
 
 ```
 jobsearch/
-├── manifest.json          # Extension manifest (MV3)
-├── background.js          # Service worker for alarms, scanning, and outreach scheduling
-├── content.js             # Content script for LinkedIn job scraping
-├── connectionContent.js   # Content script for LinkedIn connection outreach
-├── popup.html/js          # Extension popup UI
-├── options.html/js/css    # Options page for configuration
+├── manifest.json              # Extension manifest (MV3)
+├── background.js              # Service worker for alarms, scanning, and outreach scheduling
+├── content.js                 # Content script for LinkedIn job scraping
+├── arbeitsagenturContent.js   # Content script for Agentur für Arbeit job scraping
+├── connectionContent.js       # Content script for LinkedIn connection outreach
+├── popup.html/js              # Extension popup UI
+├── options.html/js/css        # Options page for configuration
 ├── scripts/
-│   ├── nlp.js            # NLP matching utilities
-│   ├── parser.js         # Resume file parsing
-│   ├── storage.js        # Storage helpers (jobs, outreach state, logs)
-│   └── export.js         # CSV export utility
-├── assets/               # Extension icons
+│   ├── nlp.js                # NLP matching utilities
+│   ├── parser.js             # Resume file parsing
+│   ├── storage.js            # Storage helpers (jobs, outreach state, logs)
+│   └── export.js             # CSV export utility
+├── assets/                   # Extension icons
 ├── vendor/
-│   └── pdfjs/           # PDF.js library (optional)
-└── README.md            # This file
+│   └── pdfjs/               # PDF.js library (optional)
+└── README.md                # This file
 ```
 
 ## Troubleshooting

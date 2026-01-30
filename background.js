@@ -196,6 +196,36 @@ async function updateRunState(updates) {
   await chrome.storage.local.set(stateUpdates);
 }
 
+// Detect job source from URL
+function detectJobSource(url) {
+  if (!url) return { source: 'unknown', sourceType: 'unknown' };
+  
+  const urlLower = url.toLowerCase();
+  
+  if (urlLower.includes('linkedin.com')) {
+    return { source: 'LinkedIn', sourceType: 'linkedin.com' };
+  }
+  
+  if (urlLower.includes('arbeitsagentur.de')) {
+    return { source: 'Agentur für Arbeit', sourceType: 'arbeitsagentur.de' };
+  }
+  
+  // Add more sources here as needed
+  return { source: 'Other', sourceType: new URL(url).hostname };
+}
+
+// Get content script file for a source
+function getContentScriptForSource(sourceType) {
+  switch (sourceType) {
+    case 'linkedin.com':
+      return 'content.js';
+    case 'arbeitsagentur.de':
+      return 'arbeitsagenturContent.js';
+    default:
+      return null;
+  }
+}
+
 // Perform scan of all configured search URLs with pagination
 async function performScan() {
   const settings = await chrome.storage.local.get([
@@ -223,19 +253,8 @@ async function performScan() {
   let totalPagesProcessed = 0;
   let totalJobsScanned = 0;
   
-  // Find or create a hidden tab for scanning
+  // We'll create tabs as needed for different sources
   let scanTab = null;
-  const tabs = await chrome.tabs.query({ url: 'https://www.linkedin.com/*' });
-  if (tabs.length > 0) {
-    scanTab = tabs[0];
-  } else {
-    scanTab = await chrome.tabs.create({
-      url: 'https://www.linkedin.com/jobs',
-      active: false
-    });
-    // Wait for tab to load
-    await new Promise(resolve => setTimeout(resolve, 3000));
-  }
   
   // Helper to normalize search URL items (supports both string and object formats)
   function normalizeSearchUrlItem(item) {
@@ -279,13 +298,29 @@ async function performScan() {
     try {
       if (!searchUrl) continue; // Skip invalid entries
       
+      // Detect source from URL
+      const { source: jobSource, sourceType } = detectJobSource(searchUrl);
+      console.log(`Scanning ${sourceType} URL: ${searchUrl}`);
+      
       await updateRunState({
         currentUrl: searchUrl,
         currentPage: 0
       });
       
-      // Process up to MAX_PAGES_PER_URL pages (start=0, 25, 50, 75, 100)
-      const pageStarts = Array.from({ length: MAX_PAGES_PER_URL }, (_, i) => i * 25);
+      // Create or reuse tab for this source
+      if (!scanTab) {
+        scanTab = await chrome.tabs.create({
+          url: searchUrl,
+          active: false
+        });
+        await new Promise(resolve => setTimeout(resolve, 3000));
+      }
+      
+      // Process up to MAX_PAGES_PER_URL pages
+      // Different pagination for different sources
+      const pageStarts = sourceType === 'arbeitsagentur.de' 
+        ? Array.from({ length: MAX_PAGES_PER_URL }, (_, i) => i) // Page numbers for arbeitsagentur
+        : Array.from({ length: MAX_PAGES_PER_URL }, (_, i) => i * 25); // Offset for LinkedIn
       
       for (let pageIndex = 0; pageIndex < pageStarts.length; pageIndex++) {
         // Check for pause before processing each page
@@ -297,7 +332,7 @@ async function performScan() {
         }
         
         const start = pageStarts[pageIndex];
-        const pageUrl = addStartParameter(searchUrl, start);
+        const pageUrl = addStartParameter(searchUrl, start, sourceType);
         
         await updateRunState({
           currentPage: pageIndex + 1
@@ -306,12 +341,17 @@ async function performScan() {
         // Navigate to page
         await chrome.tabs.update(scanTab.id, { url: pageUrl });
         
-        // Wait for tab to finish loading
+        // Wait for tab to finish loading - different URL patterns for different sources
         await new Promise((resolve) => {
           const checkTab = async () => {
             try {
               const tab = await chrome.tabs.get(scanTab.id);
-              if (tab.status === 'complete' && tab.url && tab.url.includes('linkedin.com/jobs')) {
+              const isCorrectPage = 
+                (sourceType === 'linkedin.com' && tab.url?.includes('linkedin.com/jobs')) ||
+                (sourceType === 'arbeitsagentur.de' && tab.url?.includes('arbeitsagentur.de')) ||
+                tab.status === 'complete';
+              
+              if (tab.status === 'complete' && isCorrectPage) {
                 resolve();
               } else {
                 setTimeout(checkTab, 500);
@@ -328,7 +368,21 @@ async function performScan() {
         const waitTime = pageIndex === 0 ? randomDelay(5000, 7000) : randomDelay(4000, 6000);
         await sleep(waitTime);
         
-        // Retry mechanism for sending message (content script should auto-inject from manifest)
+        // Try to inject the content script if not auto-injected
+        const contentScript = getContentScriptForSource(sourceType);
+        if (contentScript) {
+          try {
+            await chrome.scripting.executeScript({
+              target: { tabId: scanTab.id },
+              files: [contentScript]
+            });
+          } catch (e) {
+            // Script may already be injected
+          }
+          await sleep(1000);
+        }
+        
+        // Retry mechanism for sending message
         try {
           let results = null;
           let retries = 5;
@@ -356,7 +410,13 @@ async function performScan() {
           }
           
           if (results && results.jobs) {
-            const pageJobs = results.jobs;
+            // Add source information to each job
+            const pageJobs = results.jobs.map(job => ({
+              ...job,
+              source: job.source || jobSource,
+              sourceType: job.sourceType || sourceType
+            }));
+            
             totalJobsScanned += pageJobs.length;
             allNewJobs.push(...pageJobs);
             
@@ -463,15 +523,27 @@ async function performScan() {
 }
 
 // Add start parameter to LinkedIn search URL
-function addStartParameter(url, start) {
+function addStartParameter(url, start, sourceType = 'linkedin.com') {
   try {
     const urlObj = new URL(url);
-    urlObj.searchParams.set('start', start.toString());
+    
+    // Different pagination parameters for different sources
+    if (sourceType === 'arbeitsagentur.de') {
+      // Agentur für Arbeit uses 'page' parameter (1-indexed)
+      if (start > 0) {
+        urlObj.searchParams.set('page', (start + 1).toString());
+      }
+    } else {
+      // LinkedIn uses 'start' parameter (offset)
+      urlObj.searchParams.set('start', start.toString());
+    }
+    
     return urlObj.toString();
   } catch (error) {
     // If URL parsing fails, append parameter manually
+    const param = sourceType === 'arbeitsagentur.de' ? 'page' : 'start';
     const separator = url.includes('?') ? '&' : '?';
-    return `${url}${separator}start=${start}`;
+    return `${url}${separator}${param}=${start}`;
   }
 }
 

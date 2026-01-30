@@ -791,6 +791,9 @@ async function scrapeJobs(
       descriptionHtml: '',
       needsFetch: true,
       scrapedAt: Date.now(),
+      // Source information
+      source: 'LinkedIn',
+      sourceType: 'linkedin.com',
       // Preserve search URL labels on the final job object so they can be shown in the options UI
       searchLocationLabel: jobInfo.searchLocationLabel || '',
       searchKeywordLabel: jobInfo.searchKeywordLabel || ''

@@ -2240,6 +2240,24 @@ async function displayResults(jobs) {
     const labelsContainer = document.createElement('div');
     labelsContainer.className = 'job-card-labels';
 
+    // Source badge (shows which job portal this came from)
+    if (job.source || job.sourceType) {
+      const sourceLabel = document.createElement('span');
+      const sourceName = job.source || job.sourceType || 'Unknown';
+      sourceLabel.textContent = sourceName;
+      
+      // Different styling based on source
+      if (job.sourceType === 'arbeitsagentur.de') {
+        sourceLabel.className = 'job-pill job-pill-source job-pill-source-arbeitsagentur';
+      } else if (job.sourceType === 'linkedin.com') {
+        sourceLabel.className = 'job-pill job-pill-source job-pill-source-linkedin';
+      } else {
+        sourceLabel.className = 'job-pill job-pill-source';
+      }
+      
+      labelsContainer.appendChild(sourceLabel);
+    }
+    
     // Location label (green) from the saved search URL
     if (job.searchLocationLabel && String(job.searchLocationLabel).trim()) {
       const locationLabel = document.createElement('span');

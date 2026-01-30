@@ -1078,6 +1078,24 @@ footer {
   color: #854d0e;
 }
 
+/* Source badges */
+.job-pill-source {
+  background: #f3f4f6;
+  color: #374151;
+  font-weight: 500;
+}
+
+.job-pill-source-linkedin {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.job-pill-source-arbeitsagentur {
+  background: #fce7f3;
+  color: #9d174d;
+  font-weight: 600;
+}
+
 /* Split-button dropdown for job actions */
 .split-button-container {
   position: relative;
