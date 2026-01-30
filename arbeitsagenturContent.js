@@ -195,7 +195,7 @@ function extractJobData(card) {
   // Create job object with source information
   return {
     id: jobId || `aa-${hashString(url || title)}`,
-    title: cleanText(title),
+    title: cleanJobTitle(title),
     company: cleanText(company),
     location: cleanText(location),
     datePosted: datePosted,
@@ -212,12 +212,31 @@ function extractJobData(card) {
  */
 function cleanText(text) {
   if (!text) return '';
-  // Remove patterns like "119. Ergebnis:" or "1. Ergebnis:"
-  let cleaned = text.replace(/^\d+\.\s*Ergebnis:\s*/i, '');
-  // Remove any remaining leading numbers with dots like "119. "
-  cleaned = cleaned.replace(/^\d+\.\s+/, '');
+  let cleaned = text;
+  // Normalize whitespace first
+  cleaned = cleaned.replace(/\s+/g, ' ').trim();
+  // Remove patterns like "119. Ergebnis:" or "1. Ergebnis:" (with optional whitespace)
+  cleaned = cleaned.replace(/^\d+\.\s*Ergebnis\s*:\s*/i, '');
+  // Remove any remaining leading numbers with dots like "119. " at the start
+  cleaned = cleaned.replace(/^\d+\.\s*/, '');
+  return cleaned.trim();
+}
+
+/**
+ * Clean job title specifically - more aggressive cleaning
+ */
+function cleanJobTitle(text) {
+  if (!text) return '';
+  let cleaned = text;
   // Normalize whitespace
-  return cleaned.replace(/\s+/g, ' ').trim();
+  cleaned = cleaned.replace(/\s+/g, ' ').trim();
+  // Remove "X. Ergebnis:" pattern anywhere in the string
+  cleaned = cleaned.replace(/\d+\.\s*Ergebnis\s*:\s*/gi, '');
+  // Remove leading number patterns like "119. " or "1."
+  cleaned = cleaned.replace(/^\d+\.\s*/, '');
+  // Remove "Ergebnis:" if it appears alone
+  cleaned = cleaned.replace(/^Ergebnis\s*:\s*/i, '');
+  return cleaned.trim();
 }
 
 /**

@@ -307,13 +307,25 @@ async function performScan() {
         currentPage: 0
       });
       
-      // Create or reuse tab for this source
+      // Find existing tab or create new one for this source
       if (!scanTab) {
-        scanTab = await chrome.tabs.create({
-          url: searchUrl,
-          active: false
-        });
-        await new Promise(resolve => setTimeout(resolve, 3000));
+        // Check for existing tabs matching this source
+        const urlPattern = sourceType === 'arbeitsagentur.de' 
+          ? 'https://www.arbeitsagentur.de/*'
+          : 'https://www.linkedin.com/*';
+        
+        const existingTabs = await chrome.tabs.query({ url: urlPattern });
+        if (existingTabs.length > 0) {
+          scanTab = existingTabs[0];
+          console.log(`Reusing existing ${sourceType} tab:`, scanTab.id);
+        } else {
+          scanTab = await chrome.tabs.create({
+            url: searchUrl,
+            active: false
+          });
+          console.log(`Created new ${sourceType} tab:`, scanTab.id);
+          await new Promise(resolve => setTimeout(resolve, 3000));
+        }
       }
       
       // Process up to MAX_PAGES_PER_URL pages
