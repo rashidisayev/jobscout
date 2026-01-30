@@ -208,11 +208,16 @@ function extractJobData(card) {
 }
 
 /**
- * Clean text - remove extra whitespace, newlines
+ * Clean text - remove extra whitespace, newlines, and German result numbering
  */
 function cleanText(text) {
   if (!text) return '';
-  return text.replace(/\s+/g, ' ').trim();
+  // Remove patterns like "119. Ergebnis:" or "1. Ergebnis:"
+  let cleaned = text.replace(/^\d+\.\s*Ergebnis:\s*/i, '');
+  // Remove any remaining leading numbers with dots like "119. "
+  cleaned = cleaned.replace(/^\d+\.\s+/, '');
+  // Normalize whitespace
+  return cleaned.replace(/\s+/g, ' ').trim();
 }
 
 /**
